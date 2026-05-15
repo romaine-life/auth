@@ -1,0 +1,25 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local env
+.env
+.env.*
+!.env.example
+
+# Terraform / OpenTofu
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfvars
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

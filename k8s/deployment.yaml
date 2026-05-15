@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  namespace: auth
+  labels:
+    app: auth
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: auth
+    spec:
+      serviceAccountName: auth
+      containers:
+        - name: auth
+          image: romainecr.azurecr.io/auth:placeholder
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: BASE_URL
+              value: https://auth.romaine.life
+            # CNPG-managed: `auth-db-app` Secret is created automatically by the
+            # operator from cluster.yaml and rotated when the cluster is recreated.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-db-app
+                  key: uri
+            # ExternalSecret syncs these from romaine-kv → `auth-oauth` Secret.
+            - name: MICROSOFT_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: MICROSOFT_CLIENT_ID
+            - name: MICROSOFT_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: MICROSOFT_CLIENT_SECRET
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: GOOGLE_CLIENT_ID
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: GOOGLE_CLIENT_SECRET
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: BETTER_AUTH_SECRET
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 20
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 3

@@ -1,0 +1,12 @@
+name: Update Tofu Lockfile
+
+on:
+  workflow_dispatch:
+
+jobs:
+  lockfile-update:
+    uses: nelsong6/pipeline-templates/.github/workflows/tofu-lockfile-update-template.yml@main
+    permissions:
+      contents: write
+    with:
+      working_directory: 'tofu'

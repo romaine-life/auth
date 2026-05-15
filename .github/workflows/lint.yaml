@@ -1,0 +1,16 @@
+name: Lint
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  code-quality:
+    uses: nelsong6/pipeline-templates/.github/workflows/lint-template.yml@main
+    with:
+      working_directory: '.'

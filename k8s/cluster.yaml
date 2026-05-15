@@ -1,0 +1,28 @@
+# CloudNativePG Postgres cluster for the auth service.
+# Operator is installed cluster-wide via infra-bootstrap's
+# k8s/apps/cloudnative-pg.yaml; here we just declare a Cluster CR and it
+# reconciles a Pod + PVC + auto-generated Secrets (`auth-db-app`, `auth-db-ca`, etc.).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: auth-db
+  namespace: auth
+spec:
+  instances: 1
+  storage:
+    size: 5Gi
+  # `bootstrap.initdb.database` becomes the default DB and `owner` becomes the
+  # role that owns it; the generated `auth-db-app` Secret has the matching
+  # connection URI ready for the app to consume.
+  bootstrap:
+    initdb:
+      database: auth
+      owner: auth
+  # Resource requests are modest — the auth workload is tiny, but Postgres
+  # wants enough memory for shared_buffers + connection overhead.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
