@@ -1,0 +1,11 @@
+.git
+.github
+tofu
+k8s
+node_modules
+dist
+*.md
+.gitignore
+.dockerignore
+.env
+.env.*

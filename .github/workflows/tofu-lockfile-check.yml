@@ -1,0 +1,17 @@
+name: Check Tofu Lockfile
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tofu/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lockfile-check:
+    uses: nelsong6/pipeline-templates/.github/workflows/tofu-lockfile-check-template.yml@main
+    with:
+      working_directory: 'tofu'

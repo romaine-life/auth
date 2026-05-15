@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: auth
+resources:
+  - serviceaccount.yaml
+  - externalsecret.yaml
+  - cluster.yaml
+  - deployment.yaml
+  - service.yaml
+  - certificate.yaml
+  - xlistenerset.yaml
+  - httproute.yaml
+images:
+  - name: romainecr.azurecr.io/auth
+    newName: romainecr.azurecr.io/auth
+    newTag: placeholder
