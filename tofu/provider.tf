@@ -1,18 +1,12 @@
 # Remote state in Azure Storage (backend config passed via -backend-config in CI).
 # OIDC auth for the Azure providers — no static credentials stored.
 
+# `required_providers` lives in `shared-providers.tf`, which the
+# tofu-plan-apply-template curls in from infra-bootstrap/main at CI
+# time. Declaring required_providers locally would be a
+# duplicate-block error.
+
 terraform {
-  required_version = ">= 1.6.0"
-  required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 4.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
-  }
   backend "azurerm" {}
 }
 
