@@ -26,7 +26,7 @@ export const auth = betterAuth({
   advanced: {
     crossSubDomainCookies: {
       enabled: true,
-      domain: ".romaine.life",
+      domain: "romaine.life",
     },
   },
 

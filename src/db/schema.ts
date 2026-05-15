@@ -56,9 +56,14 @@ export const verification = pgTable("verification", {
 
 // JWT plugin: stores the RSA keypair used to sign JWTs. JWKS at
 // /api/auth/jwks serves the public key; apps verify against that URL.
+// Field names match the plugin's expected JS property names (publicKey,
+// privateKey, etc.) — the underlying DB columns are snake_case per the
+// usual Drizzle convention. `expiresAt` is optional and supports future
+// key rotation; the plugin only writes it when rotation is enabled.
 export const jwks = pgTable("jwks", {
   id: text("id").primaryKey(),
   publicKey: text("public_key").notNull(),
   privateKey: text("private_key").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at"),
 });
