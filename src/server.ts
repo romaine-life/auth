@@ -21,6 +21,9 @@ const CROSS_APP_ORIGINS = [
   "https://house-hunt.romaine.life",
   "https://diagrams.romaine.life",
   "https://tank.romaine.life",
+  "https://fzt-frontend.romaine.life",
+  "https://glimmung.romaine.life",
+  "https://kill-me.romaine.life",
   "http://localhost:5173",
   "http://localhost:5500",
 ];
