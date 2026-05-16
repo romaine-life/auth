@@ -1,0 +1,6 @@
+apiVersion: v2
+name: auth-issue
+description: Per-issue / per-slot validation env for auth — Deployment + Service + HTTPRoute installed alongside prod auth in the `auth` namespace, distinguished by Helm release name. Used by glimmung's native test-slot reconciler for slot lifecycle.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,42 @@
+# Per-slot helm release values. Glimmung's native test-slot reconciler
+# (and the per-PR validation workflow) overrides `image.tag`, `hostname`,
+# and `prNumber` on each install via --set; everything else is shared
+# with prod via the wildcard XListenerSet in the `auth` namespace.
+#
+# Test-slot installs run the auth app in TEST_MODE: handlers render
+# fixture data, no DB or OAuth backend is touched, and sign-in/sign-out
+# just toggle a session cookie. The slot exists to let an operator cruise
+# the UI; it's not an identity provider.
+
+image:
+  repository: romainecr.azurecr.io/auth
+  # Set per-install. Fail loudly if the caller forgot it.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Public hostname for the validation env. Set per-install to
+# `auth-slot-<i>.auth.dev.romaine.life` by the caller. The HTTPRoute
+# attaches to the wildcard XListenerSet provisioned by the prod chart
+# (k8s/templates/wildcard-listenerset.yaml).
+hostname: ""
+
+# Existing infra in the `auth` namespace.
+serviceAccount: auth
+
+# Cookie scope for test-slot deployments. Slots set cookies on
+# `.auth.dev.romaine.life` so slot sessions don't bleed into prod
+# `.romaine.life` cookies, and so slots share SSO amongst themselves.
+cookieDomain: auth.dev.romaine.life
+
+# The wildcard XListenerSet that per-install HTTPRoutes attach to.
+attachListenerSet: auth-wildcard
+attachListenerSetNamespace: auth
+
+# ExternalDNS reads Gateway parentRefs from HTTPRoutes to create DNS
+# records.
+gatewayName: main
+gatewayNamespace: envoy-gateway-system
+
+# Surfaced for cleanup-by-label. Glimmung's test-slot reconciler sets
+# this for slot installs; the per-PR workflow sets it for PR previews.
+prNumber: ""

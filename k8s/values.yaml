@@ -4,3 +4,18 @@
 image:
   repository: romainecr.azurecr.io/auth
   tag: 315fa75
+
+# Wildcard cert + XListenerSet covering auth.dev.romaine.life AND
+# *.auth.dev.romaine.life. Provisioned once by the prod chart so
+# per-slot helm releases (k8s/issue/) can attach their HTTPRoutes to
+# this listener instead of each provisioning their own cert + listener.
+# Mirrors glimmung's wildcard cert pattern.
+wildcardCertificate:
+  enabled: true
+  name: auth-wildcard
+  tlsSecret: auth-wildcard-tls
+  issuer: letsencrypt-prod-dns01
+  allowedFromNamespaces: All
+  hosts:
+    - auth.dev.romaine.life
+    - "*.auth.dev.romaine.life"
