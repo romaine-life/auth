@@ -12,6 +12,9 @@ export const auth = betterAuth({
 
   // Apps that may call this auth service from a browser. Cookie scope is
   // `.romaine.life` so the session works across every subdomain.
+  // Better Auth also validates passed-in `callbackURL` values against this
+  // list, so a downstream app's cross-app sign-in redirect needs its origin
+  // here or signInSocial throws "Invalid callbackURL".
   trustedOrigins: [
     "https://homepage.romaine.life",
     "https://workout.romaine.life",
@@ -19,6 +22,7 @@ export const auth = betterAuth({
     "https://invest.romaine.life",
     "https://house-hunt.romaine.life",
     "https://diagrams.romaine.life",
+    "https://tank.romaine.life",
     "http://localhost:5173",
     "http://localhost:5500",
   ],
