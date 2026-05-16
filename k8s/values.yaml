@@ -1,0 +1,6 @@
+# The image tag is bumped by .github/workflows/build-and-deploy.yaml on every
+# push to main (via `sed` on this file). Everything else is wired through
+# templates/.
+image:
+  repository: romainecr.azurecr.io/auth
+  tag: 4779d43

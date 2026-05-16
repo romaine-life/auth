@@ -1,0 +1,6 @@
+apiVersion: v2
+name: auth
+description: Central auth service for romaine.life (Better Auth + Hono + Drizzle on CNPG Postgres)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
