@@ -8,7 +8,21 @@ metadata:
   name: auth-db
   namespace: auth
 spec:
-  instances: 1
+  # 2 instances enables CNPG's automatic failover. During AKS node
+  # drain, CNPG detects the primary's node going unschedulable, runs
+  # a switchover to the standby (label flip
+  # cnpg.io/instanceRole: primary -> replica), and the eviction API
+  # can satisfy the primary PDB against the new pod. Service rw
+  # endpoint redirects automatically; downtime is single-digit seconds
+  # rather than the 1-3 minutes a single-instance restart takes.
+  #
+  # primaryUpdateStrategy: unsupervised (default) means CNPG performs
+  # this switchover without human approval.
+  #
+  # Replica streams WAL from the primary via synchronous=any-1
+  # replication by default. Better Auth's writes are small and
+  # infrequent so the replication lag is negligible.
+  instances: 2
   storage:
     size: 5Gi
     # Dedicated StorageClass with reclaimPolicy: Retain (see
