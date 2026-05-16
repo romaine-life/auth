@@ -11,6 +11,15 @@ spec:
   instances: 1
   storage:
     size: 5Gi
+    # Dedicated StorageClass with reclaimPolicy: Retain (see
+    # templates/storageclass.yaml). Survives accidental PVC delete or
+    # ArgoCD prune — the underlying Azure Disk persists and can be
+    # re-bound. The existing pre-PR PV needs an in-place reclaim
+    # policy patch since storageClass is immutable on a Bound PVC;
+    # this only governs NEW PVCs that CNPG provisions (i.e., when a
+    # new instance joins the cluster, including the standby that
+    # arrives with the HA bump).
+    storageClass: auth-db-retain
   # `bootstrap.initdb.database` becomes the default DB and `owner` becomes the
   # role that owns it; the generated `auth-db-app` Secret has the matching
   # connection URI ready for the app to consume.
