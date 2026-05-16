@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { jwt } from "better-auth/plugins";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "./db/client.js";
-import { getManagedOrigins } from "./managed_origins.js";
+import { getManagedOrigins } from "./managed-origins.js";
 
 const baseUrl = process.env.BASE_URL ?? "https://auth.romaine.life";
 

@@ -74,7 +74,7 @@ export const jwks = pgTable("jwks", {
 //
 // `project` is glimmung's project name (e.g. "tank-operator", "glimmung").
 // `wildcard` is a host pattern like "https://*.tank.dev.romaine.life" —
-// validated at write time in src/managed_origins.ts.
+// validated at write time in src/managed-origins.ts.
 //
 // Uniqueness on (project, wildcard) prevents accidental duplicates from
 // repeated upserts; glimmung's reconciler uses replace-set semantics, so a

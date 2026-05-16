@@ -13,8 +13,8 @@ import {
   listManagedOrigins,
   listManagedOriginsByProject,
   replaceProjectOrigins,
-} from "./managed_origins.js";
-import { verifyK8sSAToken } from "./k8s_auth.js";
+} from "./managed-origins.js";
+import { verifyK8sSAToken } from "./k8s-auth.js";
 import { matchWildcard } from "./wildcard.js";
 
 // Cross-origin fetches from .romaine.life apps that hit /api/auth/* to
