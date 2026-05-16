@@ -1,0 +1,25 @@
+{{- /*
+Daily base backup for the auth-db Cluster. Continuous WAL archiving is
+configured on the Cluster itself (in .spec.backup.barmanObjectStore);
+this resource schedules the periodic base backup that CNPG anchors
+its point-in-time recovery against.
+
+backupOwnerReference: self — the Backup resource each schedule creates
+owns itself (not the ScheduledBackup), so deleting the ScheduledBackup
+doesn't cascade-delete the historical backups.
+
+immediate: true — kick off one base backup right after creation so we
+don't wait until the next 03:00 UTC window for the first one.
+*/}}
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: auth-db-daily
+  namespace: auth
+spec:
+  # 6-field cron (seconds-resolution) per CNPG schema. 03:00:00 UTC.
+  schedule: "0 0 3 * * *"
+  backupOwnerReference: self
+  immediate: true
+  cluster:
+    name: auth-db

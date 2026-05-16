@@ -19,3 +19,16 @@ wildcardCertificate:
   hosts:
     - auth.dev.romaine.life
     - "*.auth.dev.romaine.life"
+
+# auth-db backup destination. storageAccount is provisioned by
+# tofu/backups.tf and named `authdbbackups<random>`; on first tofu
+# apply, copy the value of `terraform output auth_db_backups_storage_account`
+# into the field below. container is fixed by tofu and matches.
+#
+# Empty storageAccount short-circuits the CNPG backup config to a
+# render-error (no destinationPath), which is the right failure mode
+# while tofu is being applied for the first time — better than a
+# silently-misconfigured Cluster that thinks it's backing up but isn't.
+backups:
+  storageAccount: ""
+  container: "auth-db"
