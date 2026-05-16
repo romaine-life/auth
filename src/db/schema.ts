@@ -12,7 +12,7 @@ export const user = pgTable("user", {
   emailVerified: boolean("email_verified").notNull().default(false),
   image: text("image"),
   // Custom fields — keep in sync with auth.ts `user.additionalFields`.
-  role: text("role").notNull().default("user"),
+  role: text("role").notNull().default("pending"),
   apps: text("apps").notNull().default("{}"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

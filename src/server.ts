@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { html, raw } from "hono/html";
 import { logger } from "hono/logger";
 import { eq, desc } from "drizzle-orm";
@@ -245,8 +245,17 @@ app.get("/", async (c) => {
         <div class="name">${u.name}</div>
         <div class="email">${u.email}</div>
       </div>
-      <span class="badge ${claims.role === "admin" ? "badge-admin" : ""}">${claims.role === "admin" ? "Blade Runner" : "Citizen"}</span>
+      <span class="badge ${claims.role === "admin" ? "badge-admin" : ""}">${claims.role === "admin" ? "Blade Runner" : claims.role === "user" ? "Citizen" : "Awaiting Review"}</span>
     </div>
+
+    ${claims.role === "pending" ? html`
+      <div class="card" style="border-color: var(--muted); margin-bottom: 16px;">
+        <p style="margin: 0; color: var(--dim); font-size: 12px;">
+          Authentication accepted, but the registry does not yet recognize you as a romaine.life subject.
+          A blade runner must promote your status before downstream apps will admit you.
+        </p>
+      </div>
+    ` : html``}
 
     <h2>Provenance</h2>
     ${accounts.length === 0
@@ -280,6 +289,9 @@ app.get("/", async (c) => {
     <pre class="claims">${JSON.stringify(claims, null, 2)}</pre>
 
     <div class="actions">
+      ${claims.role === "admin" ? html`
+        <a class="btn" href="/admin">Tyrell Console</a>
+      ` : html``}
       <form method="POST" action="/sign-out" style="display: inline">
         <button class="btn btn-danger" type="submit">End Interview</button>
       </form>
@@ -292,6 +304,142 @@ app.get("/", async (c) => {
       <span>NEXUS-7</span>
     </footer>
   `));
+});
+
+// ── Admin console ──────────────────────────────────────────────────────────
+// Single-page user manager — role + per-app `apps` JSON blob, plus name.
+// Source of truth for the platform-wide admin list (formerly the
+// `romaine-life-admin-emails` KV secret). Gated on role=admin claim.
+
+async function requireAdmin(c: Context) {
+  const result = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!result?.session) return { status: 302 as const, location: "/" };
+  const role = (result.user as { role?: string }).role ?? "user";
+  if (role !== "admin") return { status: 403 as const };
+  return { ok: true as const, user: result.user };
+}
+
+app.get("/admin", async (c) => {
+  const gate = await requireAdmin(c);
+  if ("status" in gate) {
+    if (gate.status === 302) return c.redirect(gate.location);
+    return c.text("forbidden", 403);
+  }
+  const users = await db.select().from(user).orderBy(desc(user.createdAt));
+  const flash = c.req.query("ok");
+  return c.html(SHELL("Tyrell Console — Subjects", html`
+    <div class="marquee">
+      ${TYRELL_PYRAMID}
+      TYRELL CORPORATION · OPERATIONS CONSOLE
+    </div>
+    <h1 class="title">Subject Registry</h1>
+    <p class="subtitle">Authenticate · Classify · Retire</p>
+
+    ${flash ? html`<div class="card" style="border-color: var(--accent); margin-bottom: 16px;">
+      <span class="v">${flash}</span>
+    </div>` : html``}
+
+    <h2>Active Subjects (${users.length})</h2>
+    ${users.length === 0
+      ? html`<div class="card"><span class="k">No subjects on file.</span></div>`
+      : users.map((u) => html`
+        <form method="POST" action="/admin/users/${u.id}" class="card" style="margin: 8px 0;">
+          <div class="row" style="margin-bottom: 8px;">
+            <span class="v" style="font-size: 14px;">${u.email}</span>
+            <span class="k">${u.createdAt.toISOString().slice(0, 10)}</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 90px 1fr; gap: 8px 12px; align-items: center;">
+            <label class="k">Name</label>
+            <input name="name" value="${u.name}" style="background: #000; color: var(--text); border: 1px solid var(--border); padding: 6px 8px; font-family: inherit; font-size: 12px;" />
+            <label class="k">Role</label>
+            <select name="role" style="background: #000; color: var(--text); border: 1px solid var(--border); padding: 6px 8px; font-family: inherit; font-size: 12px;">
+              <option value="user" ${u.role === "user" ? "selected" : ""}>citizen</option>
+              <option value="admin" ${u.role === "admin" ? "selected" : ""}>blade runner</option>
+            </select>
+            <label class="k">Apps</label>
+            <textarea name="apps" rows="2" style="background: #000; color: var(--text); border: 1px solid var(--border); padding: 6px 8px; font-family: inherit; font-size: 11px; resize: vertical;">${u.apps}</textarea>
+          </div>
+          <div class="actions" style="margin-top: 8px; justify-content: flex-start;">
+            <button class="btn" type="submit">Update</button>
+          </div>
+        </form>
+      `)}
+
+    <h2>Enroll Subject</h2>
+    <p style="color: var(--dim); font-size: 11px; margin: 0 0 8px;">
+      Pre-create a row before the subject completes their first sign-in. Better
+      Auth's Microsoft flow will reconcile by email match when they arrive.
+    </p>
+    <form method="POST" action="/admin/users" class="card">
+      <div style="display: grid; grid-template-columns: 90px 1fr; gap: 8px 12px; align-items: center;">
+        <label class="k">Email</label>
+        <input name="email" required placeholder="subject@example.com" style="background: #000; color: var(--text); border: 1px solid var(--border); padding: 6px 8px; font-family: inherit; font-size: 12px;" />
+        <label class="k">Name</label>
+        <input name="name" placeholder="Display name" style="background: #000; color: var(--text); border: 1px solid var(--border); padding: 6px 8px; font-family: inherit; font-size: 12px;" />
+        <label class="k">Role</label>
+        <select name="role" style="background: #000; color: var(--text); border: 1px solid var(--border); padding: 6px 8px; font-family: inherit; font-size: 12px;">
+          <option value="user">citizen</option>
+          <option value="admin">blade runner</option>
+        </select>
+      </div>
+      <div class="actions" style="margin-top: 12px; justify-content: flex-start;">
+        <button class="btn" type="submit">Enroll</button>
+      </div>
+    </form>
+
+    <div class="actions">
+      <a class="btn" href="/">← Dashboard</a>
+    </div>
+
+    <footer>
+      <span>BLADE RUNNER CONSOLE · NEXUS-7</span>
+    </footer>
+  `));
+});
+
+app.post("/admin/users", async (c) => {
+  const gate = await requireAdmin(c);
+  if ("status" in gate) return c.text("forbidden", gate.status === 302 ? 401 : 403);
+  const form = await c.req.formData();
+  const email = String(form.get("email") ?? "").trim().toLowerCase();
+  const name = String(form.get("name") ?? "").trim() || email;
+  const role = String(form.get("role") ?? "user");
+  if (!email || !email.includes("@")) return c.text("invalid email", 400);
+  if (role !== "admin" && role !== "user") return c.text("invalid role", 400);
+  // Pre-create the row. Better Auth's Microsoft social provider matches on
+  // email when the user signs in for the first time, so the row will gain
+  // emailVerified=true + the Microsoft account link at that point.
+  // crypto.randomUUID is fine for the user id; Better Auth itself uses
+  // nanoid by default but accepts any unique string.
+  const id = crypto.randomUUID();
+  try {
+    await db.insert(user).values({ id, email, name, role, emailVerified: false });
+  } catch (err) {
+    console.error("[admin/users] insert failed:", err);
+    return c.text("insert failed (email likely already exists)", 400);
+  }
+  return c.redirect(`/admin?ok=enrolled+${encodeURIComponent(email)}`);
+});
+
+app.post("/admin/users/:id", async (c) => {
+  const gate = await requireAdmin(c);
+  if ("status" in gate) return c.text("forbidden", gate.status === 302 ? 401 : 403);
+  const id = c.req.param("id");
+  const form = await c.req.formData();
+  const name = String(form.get("name") ?? "").trim();
+  const role = String(form.get("role") ?? "user");
+  const apps = String(form.get("apps") ?? "{}");
+  if (!name) return c.text("name required", 400);
+  if (role !== "admin" && role !== "user") return c.text("invalid role", 400);
+  try {
+    JSON.parse(apps);
+  } catch {
+    return c.text("apps must be valid JSON", 400);
+  }
+  await db.update(user)
+    .set({ name, role, apps, updatedAt: new Date() })
+    .where(eq(user.id, id));
+  return c.redirect("/admin?ok=updated");
 });
 
 // Better Auth's `asResponse: true` returns a full Response object including
