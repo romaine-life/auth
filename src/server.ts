@@ -14,8 +14,13 @@ import {
   listManagedOriginsByProject,
   replaceProjectOrigins,
 } from "./managed-origins.js";
-import { verifyK8sSAToken } from "./k8s-auth.js";
+import { parseAllowlist, verifyK8sSAToken } from "./k8s-auth.js";
 import { matchWildcard } from "./wildcard.js";
+import {
+  exchangeServiceAccountToken,
+  ExchangeError,
+} from "./service-exchange.js";
+import { isReservedServiceEmail } from "./synthetic-email.js";
 
 // Cross-origin fetches from .romaine.life apps that hit /api/auth/* to
 // pick up a JWT (silent-exchange path) or check session need CORS
@@ -64,6 +69,14 @@ app.get("/ready", (c) => c.text("ok"));
 // In TEST_MODE we skip registration entirely — test slots have no DB and
 // no inbound writers; a 404 is the correct surface there.
 if (process.env.TEST_MODE !== "true") {
+  // Admin path uses the K8S_ADMIN_* env vars; service path (below) uses
+  // K8S_SERVICE_*. Both go through the same verifyK8sSAToken but with
+  // different pinned audiences and allowlists.
+  const ADMIN_AUDIENCE = (
+    process.env.K8S_ADMIN_AUDIENCE ?? "https://auth.romaine.life"
+  ).trim();
+  const ADMIN_ALLOWLIST = parseAllowlist(process.env.K8S_ADMIN_SA_ALLOWLIST ?? "");
+
   app.use("/api/admin/origins/*", async (c, next) => {
     const header = c.req.header("Authorization");
     if (!header || !header.startsWith("Bearer ")) {
@@ -76,7 +89,10 @@ if (process.env.TEST_MODE !== "true") {
       // is the only allowed caller. Persisting the subject on c.var would
       // require Hono Variables typing; skip until we have a real second
       // caller.
-      await verifyK8sSAToken(token);
+      await verifyK8sSAToken(token, {
+        audience: ADMIN_AUDIENCE,
+        allowlist: ADMIN_ALLOWLIST,
+      });
     } catch (e) {
       return c.json({ error: `unauthorized: ${(e as Error).message}` }, 401);
     }
@@ -123,6 +139,55 @@ if (process.env.TEST_MODE !== "true") {
     const project = c.req.param("project");
     await deleteProjectOrigins(project);
     return c.json({ project, wildcards: [] });
+  });
+
+  // ── Service-principal exchange ───────────────────────────────────────────
+  // Tank-operator session pods POST their projected SA token here to
+  // receive an auth.romaine.life service-principal JWT (role=service)
+  // that downstream apps verify the same way they verify human tokens
+  // (same JWKS, same iss/aud, just a new role).
+  //
+  // Inbound auth is the SA token itself in the Authorization header —
+  // no separate caller credential. AuthN gate uses K8S_SERVICE_AUDIENCE
+  // and K8S_SERVICE_SA_ALLOWLIST (parallel to the K8S_ADMIN_* env vars
+  // above) so a glimmung admin token cannot be replayed as a service
+  // principal and vice versa.
+  //
+  // Registered before Better Auth's /api/auth/* catch-all so this more
+  // specific route wins. Body is empty — the token is the entirety of
+  // the input. Response shape mirrors the JWT plugin's getToken.
+  //
+  // See nelsong6/tank-operator#486.
+  app.post("/api/auth/exchange/k8s", async (c) => {
+    const header = c.req.header("Authorization");
+    if (!header || !header.startsWith("Bearer ")) {
+      return c.json({ error: "missing bearer token" }, 401);
+    }
+    const saToken = header.slice("Bearer ".length).trim();
+    try {
+      const result = await exchangeServiceAccountToken(saToken);
+      return c.json({
+        token: result.token,
+        expires_at: result.expiresAt,
+        sub: result.userId,
+        email: result.email,
+        actor_email: result.actorEmail,
+        session_id: result.sessionId,
+      });
+    } catch (e) {
+      if (e instanceof ExchangeError) {
+        // Reason string is intended for the orchestrator's structured
+        // log and the counter labels (Stage 5 observability); the
+        // human-readable message goes to the body for operator
+        // debugging.
+        return c.json(
+          { error: e.message, reason: e.reason },
+          e.status as Parameters<typeof c.json>[1],
+        );
+      }
+      console.error("[/api/auth/exchange/k8s] unexpected:", e);
+      return c.json({ error: "internal error", reason: "error_internal" }, 500);
+    }
   });
 }
 
@@ -1667,6 +1732,13 @@ app.post("/admin/users", async (c) => {
   const role = String(form.get("role") ?? "user");
   if (!email || !email.includes("@")) return c.text("invalid email", 400);
   if (role !== "admin" && role !== "user") return c.text("invalid role", 400);
+  if (isReservedServiceEmail(email)) {
+    // Admin console must not create human users under the service-principal
+    // reserved domains — collision with a real exchange would point two
+    // different intents (admin enrollment vs SA exchange) at the same row.
+    // Service principals are minted exclusively by /api/auth/exchange/k8s.
+    return c.text("email is in a reserved service-principal domain", 400);
+  }
   // Pre-create the row. Better Auth's Microsoft social provider matches on
   // email when the user signs in for the first time, so the row will gain
   // emailVerified=true + the Microsoft account link at that point.

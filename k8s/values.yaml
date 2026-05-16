@@ -64,3 +64,20 @@ k8sOidc:
   # namespace (see nelsong6/glimmung k8s/values.yaml: `serviceAccount:
   # infra-shared`).
   adminSaAllowlist: "glimmung/infra-shared"
+  # Service-principal exchange (/api/auth/exchange/k8s). Session pods
+  # mint a projected SA token with this audience and POST it here to
+  # receive an auth.romaine.life JWT with role=service. See
+  # nelsong6/tank-operator#486.
+  serviceAudience: "https://auth.romaine.life"
+  # Allowed (namespace, serviceAccount) callers for the service path.
+  # Tank-operator session pods run as `claude-session` in the
+  # `tank-operator-sessions` namespace.
+  serviceSaAllowlist: "tank-operator-sessions/claude-session"
+  # Namespaces hosting service-principal consumer pods — the auth pod
+  # gets a cross-namespace Role + RoleBinding for `pods get` in each so
+  # /api/auth/exchange/k8s can read lineage annotations
+  # (tank-operator/owner-email, tank-operator/session-id) at exchange
+  # time. Add a namespace here when onboarding a new consumer, and add
+  # a matching row to NAMESPACE_TO_CONSUMER in src/service-exchange.ts.
+  serviceConsumerNamespaces:
+    - tank-operator-sessions

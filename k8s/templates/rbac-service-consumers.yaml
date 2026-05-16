@@ -1,0 +1,46 @@
+{{- /*
+Cross-namespace RBAC for /api/auth/exchange/k8s.
+
+For every namespace listed in `.Values.k8sOidc.serviceConsumerNamespaces`,
+create a Role + RoleBinding granting the auth ServiceAccount (auth/auth)
+permission to GET pods in that namespace. The exchange handler reads each
+consumer pod's lineage annotations (tank-operator/owner-email,
+tank-operator/session-id) at exchange time — see src/k8s-pod.ts.
+
+Scoped strictly to `pods get` (no list, no watch, no other resources).
+This is the minimum surface required to resolve a single pod by name,
+which is all the exchange handler does. Adding a new consumer namespace
+is one entry in values.yaml here PLUS one entry in NAMESPACE_TO_CONSUMER
+in src/service-exchange.ts — both required by construction.
+
+See nelsong6/tank-operator#486.
+*/}}
+{{- range .Values.k8sOidc.serviceConsumerNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: auth-pod-lineage-reader
+  namespace: {{ . | quote }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+    # No resourceNames pin — exchange-time lookup is by pod name from the
+    # SA token's bound-pod claim, which is unbounded in shape. Trust
+    # comes from the SA-token verifier upstream, not this RBAC.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auth-pod-lineage-reader
+  namespace: {{ . | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: auth
+    namespace: auth
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: auth-pod-lineage-reader
+{{- end }}
