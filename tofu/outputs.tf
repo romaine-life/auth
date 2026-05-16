@@ -17,3 +17,8 @@ output "auth_db_backups_container" {
   value       = azurerm_storage_container.auth_db_backups.name
   description = "Container within the backups storage account."
 }
+
+output "auth_db_backup_writer_client_id" {
+  value       = azurerm_user_assigned_identity.auth_db_backup_writer.client_id
+  description = "Client ID of the UAMI federated to the auth-db ServiceAccount. After this stack applies, copy into k8s/values.yaml backups.workloadIdentityClientId in the chart-side cutover PR."
+}
