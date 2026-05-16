@@ -294,21 +294,50 @@ app.get("/", async (c) => {
   `));
 });
 
-// Trigger Better Auth's social sign-in server-side, then 302 the browser to
-// the Microsoft /authorize URL it returns. Keeps the user on this origin
-// (no client JS needed to POST). Google config remains in auth.ts so it's
-// a one-line revert if we ever bring it back.
+// Forward to Better Auth's own endpoint so it can set the PKCE/state cookies
+// on the actual response that goes back to the browser. Calling
+// `auth.api.signInSocial()` directly works but its Set-Cookie headers land on
+// an internal Response we don't return, which produced `state_mismatch` at
+// the Microsoft callback. We extract the redirect URL from Better Auth's JSON
+// response, build our own 302 to that URL, and copy every Set-Cookie header
+// across so the browser has them before it follows the redirect.
+async function forwardToAuthHandler(c: { req: { url: string; raw: { headers: Headers } } }, path: string, body?: unknown): Promise<Response> {
+  const origin = new URL(c.req.url).origin;
+  const init: RequestInit = {
+    method: "POST",
+    headers: new Headers({
+      cookie: c.req.raw.headers.get("cookie") ?? "",
+      ...(body ? { "content-type": "application/json" } : {}),
+    }),
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  };
+  return auth.handler(new Request(`${origin}${path}`, init));
+}
+
+function copySetCookies(from: Response, to: Response): void {
+  for (const cookie of from.headers.getSetCookie()) {
+    to.headers.append("set-cookie", cookie);
+  }
+}
+
 app.post("/sign-in/microsoft", async (c) => {
-  const result = await auth.api.signInSocial({
-    body: { provider: "microsoft", callbackURL: "/" },
+  const authRes = await forwardToAuthHandler(c, "/api/auth/sign-in/social", {
+    provider: "microsoft",
+    callbackURL: "/",
   });
-  if (!result?.url) return c.text("sign-in failed", 500);
-  return c.redirect(result.url);
+  if (!authRes.ok) return c.text("sign-in failed", 500);
+  const data = await authRes.json() as { url?: string };
+  if (!data.url) return c.text("sign-in failed", 500);
+  const redirect = new Response(null, { status: 302, headers: { Location: data.url } });
+  copySetCookies(authRes, redirect);
+  return redirect;
 });
 
 app.post("/sign-out", async (c) => {
-  await auth.api.signOut({ headers: c.req.raw.headers });
-  return c.redirect("/", 302);
+  const authRes = await forwardToAuthHandler(c, "/api/auth/sign-out");
+  const redirect = new Response(null, { status: 302, headers: { Location: "/" } });
+  copySetCookies(authRes, redirect);
+  return redirect;
 });
 
 const port = Number(process.env.PORT ?? 3000);
