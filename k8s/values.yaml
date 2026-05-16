@@ -60,5 +60,7 @@ k8sOidc:
   # JWT-validating service in the cluster.
   adminAudience: "https://auth.romaine.life"
   # Allowed (namespace, serviceAccount) callers, comma-separated.
-  # Glimmung is the only authorized writer today.
-  adminSaAllowlist: "glimmung/glimmung"
+  # Glimmung's deployment runs as `infra-shared` in the `glimmung`
+  # namespace (see nelsong6/glimmung k8s/values.yaml: `serviceAccount:
+  # infra-shared`).
+  adminSaAllowlist: "glimmung/infra-shared"
