@@ -49,33 +49,37 @@ spec:
       memory: 256Mi
     limits:
       memory: 512Mi
+  # Workload-identity annotations on the CNPG-managed ServiceAccount.
+  # The azwi webhook reads `azure.workload.identity/client-id` from the
+  # SA at pod-creation time and projects a federated token at
+  # /var/run/secrets/azure/tokens/azure-identity-token. CNPG's
+  # `inheritFromAzureAD: true` (below) then uses DefaultAzureCredential,
+  # which finds the projected token and exchanges it for a Storage
+  # access token bound to the UAMI in tofu/workload-identity.tf.
+  serviceAccountTemplate:
+    metadata:
+      annotations:
+        azure.workload.identity/client-id: {{ .Values.backups.workloadIdentityClientId | quote }}
+  # Pod-level label the azwi mutating webhook keys on to project the
+  # SA token volume. CNPG's inheritedMetadata applies the label to
+  # every pod the Cluster owns (primary + standbys).
+  inheritedMetadata:
+    labels:
+      azure.workload.identity/use: "true"
   # Continuous WAL archiving + base backup to Azure Blob. The
   # ScheduledBackup CR (templates/scheduledbackup.yaml) drives the
   # periodic base backups; CNPG streams WAL between backups so a
   # restore can hit any point in time within the retention window.
   #
-  # azureCredentials.connectionString resolves via the Secret
-  # provisioned by templates/externalsecret-cnpg-backups.yaml, which
-  # mirrors a KV entry that tofu/backups.tf writes alongside the
-  # storage account itself.
-  #
-  # Migration note (future hardening): swap connectionString for
-  # inheritFromAzureAD with a federated UAMI. Requires:
-  #   - UAMI provisioned in tofu with Storage Blob Data Contributor
-  #     on this container only
-  #   - Federated credential on subject
-  #     system:serviceaccount:auth:auth-db
-  #   - serviceAccountTemplate.metadata.annotations on this Cluster
-  #     with azure.workload.identity/client-id
-  # Out of scope for v1 because the account is single-purpose and the
-  # connection string never leaves cluster + KV.
+  # azureCredentials.inheritFromAzureAD resolves via the projected SA
+  # token + DefaultAzureCredential. The connection-string flow (and the
+  # ExternalSecret/k8s Secret/KV entry that backed it) was removed in
+  # this PR per docs/migration-policy.md — no parallel auth paths.
   backup:
     barmanObjectStore:
       destinationPath: "https://{{ .Values.backups.storageAccount }}.blob.core.windows.net/{{ .Values.backups.container }}/"
       azureCredentials:
-        connectionString:
-          name: auth-db-backup-storage
-          key: connection-string
+        inheritFromAzureAD: true
       wal:
         compression: gzip
       data:

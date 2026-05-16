@@ -32,7 +32,14 @@ wildcardCertificate:
 backups:
   # Provisioned by tofu/backups.tf — `authdbbackups<random>`. Update
   # this whenever tofu replaces the storage account (rare; happens on
-  # delete/re-import only). The matching KV connection-string secret
-  # tracks the same account automatically.
+  # delete/re-import only).
   storageAccount: "authdbbackupspjbrsd"
   container: "auth-db"
+  # Workload-identity client ID for the auth-db-backup-writer UAMI
+  # provisioned in tofu/workload-identity.tf. Copy from
+  # `terraform output auth_db_backup_writer_client_id` after the tofu
+  # apply that creates the UAMI. The chart's cluster.yaml uses this on
+  # the SA annotation azure.workload.identity/client-id; CNPG's
+  # inheritFromAzureAD path then picks up the projected token at
+  # /var/run/secrets/azure/tokens/azure-identity-token.
+  workloadIdentityClientId: "4d3946f7-3845-4cb4-84f7-f6210dda6f01"
