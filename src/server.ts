@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
+import { cors } from "hono/cors";
 import { html, raw } from "hono/html";
 import { logger } from "hono/logger";
 import { eq, desc } from "drizzle-orm";
@@ -7,8 +8,39 @@ import { auth } from "./auth.js";
 import { db } from "./db/client.js";
 import { account, session, user } from "./db/schema.js";
 
+// Cross-origin fetches from .romaine.life apps that hit /api/auth/* to
+// pick up a JWT (silent-exchange path) or check session need CORS
+// response headers. Better Auth's `trustedOrigins` only governs CSRF
+// and callbackURL validation — it does not set Access-Control-Allow-Origin.
+// Hono's cors middleware fills that in, mirroring the same origin list.
+const CROSS_APP_ORIGINS = [
+  "https://homepage.romaine.life",
+  "https://workout.romaine.life",
+  "https://plants.romaine.life",
+  "https://invest.romaine.life",
+  "https://house-hunt.romaine.life",
+  "https://diagrams.romaine.life",
+  "https://tank.romaine.life",
+  "http://localhost:5173",
+  "http://localhost:5500",
+];
+
 const app = new Hono();
 app.use("*", logger());
+
+// Apply CORS only to the Better Auth surface — the dashboard at "/" is a
+// same-origin HTML page and doesn't need ACA headers, and limiting scope
+// keeps preflight cost off the unrelated routes.
+app.use(
+  "/api/auth/*",
+  cors({
+    origin: (origin) => (CROSS_APP_ORIGINS.includes(origin) ? origin : null),
+    credentials: true,
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Authorization", "Content-Type"],
+    maxAge: 600,
+  }),
+);
 
 app.get("/health", (c) => c.text("ok"));
 app.get("/ready", (c) => c.text("ok"));
