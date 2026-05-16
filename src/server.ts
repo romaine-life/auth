@@ -454,10 +454,16 @@ function copySetCookies(from: Response, to: Response): void {
   }
 }
 
-app.post("/sign-in/microsoft", async (c) => {
+// Shared Microsoft sign-in entrypoint. POST is the form-driven path from
+// this service's own dashboard. GET with a `callbackURL` query param is the
+// cross-app sign-in path: downstream apps (e.g. tank.romaine.life) link
+// here with their post-sign-in URL and the user gets redirected back to
+// the app after Microsoft completes. Better Auth validates callbackURL
+// against `trustedOrigins` in auth.ts — passing an unlisted origin throws.
+async function microsoftSignInRedirect(c: Context, callbackURL: string) {
   try {
     const authRes = await auth.api.signInSocial({
-      body: { provider: "microsoft", callbackURL: "/" },
+      body: { provider: "microsoft", callbackURL },
       headers: c.req.raw.headers,
       asResponse: true,
     });
@@ -477,6 +483,13 @@ app.post("/sign-in/microsoft", async (c) => {
     console.error("[sign-in] threw:", err);
     return c.text("sign-in failed", 500);
   }
+}
+
+app.post("/sign-in/microsoft", (c) => microsoftSignInRedirect(c, "/"));
+
+app.get("/sign-in/microsoft", (c) => {
+  const callbackURL = c.req.query("callbackURL") ?? "/";
+  return microsoftSignInRedirect(c, callbackURL);
 });
 
 app.post("/sign-out", async (c) => {
