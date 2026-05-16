@@ -26,3 +26,37 @@ spec:
       memory: 256Mi
     limits:
       memory: 512Mi
+  # Continuous WAL archiving + base backup to Azure Blob. The
+  # ScheduledBackup CR (templates/scheduledbackup.yaml) drives the
+  # periodic base backups; CNPG streams WAL between backups so a
+  # restore can hit any point in time within the retention window.
+  #
+  # azureCredentials.connectionString resolves via the Secret
+  # provisioned by templates/externalsecret-cnpg-backups.yaml, which
+  # mirrors a KV entry that tofu/backups.tf writes alongside the
+  # storage account itself.
+  #
+  # Migration note (future hardening): swap connectionString for
+  # inheritFromAzureAD with a federated UAMI. Requires:
+  #   - UAMI provisioned in tofu with Storage Blob Data Contributor
+  #     on this container only
+  #   - Federated credential on subject
+  #     system:serviceaccount:auth:auth-db
+  #   - serviceAccountTemplate.metadata.annotations on this Cluster
+  #     with azure.workload.identity/client-id
+  # Out of scope for v1 because the account is single-purpose and the
+  # connection string never leaves cluster + KV.
+  backup:
+    barmanObjectStore:
+      destinationPath: "https://{{ .Values.backups.storageAccount }}.blob.core.windows.net/{{ .Values.backups.container }}/"
+      azureCredentials:
+        connectionString:
+          name: auth-db-backup-storage
+          key: connection-string
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+    # 30 days of base backups + WAL. CNPG prunes anything older when
+    # the next backup completes.
+    retentionPolicy: "30d"
