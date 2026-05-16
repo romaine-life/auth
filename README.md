@@ -19,8 +19,30 @@ investing, house-hunt, and fzt-frontend.
 - `POST /api/auth/sign-in/social/google` — kicks off the Google flow
 - `GET  /api/auth/get-session` — returns the current session for the cookie
 - `GET  /api/auth/jwks` — JSON Web Key Set; **apps verify issued JWTs against this URL**
+- `GET  /api/admin/origins[/{project}]` — list glimmung-managed slot wildcards (k8s-SA-auth)
+- `PUT  /api/admin/origins/{project}` — replace a project's slot wildcards (k8s-SA-auth, idempotent)
+- `DELETE /api/admin/origins/{project}` — drop a project's slot wildcards (k8s-SA-auth)
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
+
+## Managed slot origins
+
+Per-project slot wildcards (e.g. `https://*.tank.dev.romaine.life`) live in
+the `managed_origin` table, **owned by glimmung's reconciler**. Each row
+contributes to both Better Auth's `trustedOrigins` (callbackURL validation)
+and Hono's CORS allowlist on `/api/auth/*`. Static peers (the apps in
+`PROD_TRUSTED_ORIGINS` / `CROSS_APP_ORIGINS`) stay in source; slot wildcards
+do not.
+
+Writes to `/api/admin/origins/*` authenticate via the inbound caller's k8s
+ServiceAccount token — an RS256 JWT signed by the cluster's OIDC issuer.
+Validation pins issuer, audience (`https://auth.romaine.life`), and the
+`(namespace, serviceAccount)` claim against `K8S_ADMIN_SA_ALLOWLIST`.
+Glimmung's deployment mounts a projected token with the right audience so
+a stolen token cannot be replayed against another JWT verifier.
+
+See [nelsong6/glimmung#142](https://glimmung.romaine.life/i/glimmung/142) for
+the cross-repo architecture.
 
 ## How apps consume this
 

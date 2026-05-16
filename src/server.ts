@@ -5,26 +5,32 @@ import { html, raw } from "hono/html";
 import { logger } from "hono/logger";
 import { setCookie, deleteCookie, getCookie } from "hono/cookie";
 import { eq, desc } from "drizzle-orm";
-import { auth } from "./auth.js";
+import { auth, resolveAllTrustedOrigins } from "./auth.js";
 import { db } from "./db/client.js";
 import { account, session, user } from "./db/schema.js";
+import {
+  deleteProjectOrigins,
+  listManagedOrigins,
+  listManagedOriginsByProject,
+  replaceProjectOrigins,
+} from "./managed_origins.js";
+import { verifyK8sSAToken } from "./k8s_auth.js";
+import { matchWildcard } from "./wildcard.js";
 
 // Cross-origin fetches from .romaine.life apps that hit /api/auth/* to
 // pick up a JWT (silent-exchange path) or check session need CORS
 // response headers. Better Auth's `trustedOrigins` only governs CSRF
 // and callbackURL validation — it does not set Access-Control-Allow-Origin.
-// Hono's cors middleware fills that in, mirroring the same origin list.
-const CROSS_APP_ORIGINS = [
-  "https://homepage.romaine.life",
-  "https://workout.romaine.life",
-  "https://investing.romaine.life",
-  "https://diagrams.romaine.life",
-  "https://tank.romaine.life",
-  "https://fzt-frontend.romaine.life",
-  "https://glimmung.romaine.life",
-  "http://localhost:5173",
-  "http://localhost:5500",
-];
+// Hono's cors middleware fills that in, mirroring the trustedOrigins union
+// (static prod peers + glimmung-managed slot wildcards). Pattern semantics:
+// `*` matches one DNS label, no dots crossed. See src/wildcard.ts.
+async function corsOriginMatcher(origin: string): Promise<string | null> {
+  if (!origin) return null;
+  for (const pattern of await resolveAllTrustedOrigins()) {
+    if (matchWildcard(pattern, origin)) return origin;
+  }
+  return null;
+}
 
 const app = new Hono();
 app.use("*", logger());
@@ -35,7 +41,7 @@ app.use("*", logger());
 app.use(
   "/api/auth/*",
   cors({
-    origin: (origin) => (CROSS_APP_ORIGINS.includes(origin) ? origin : null),
+    origin: corsOriginMatcher,
     credentials: true,
     allowMethods: ["GET", "POST", "OPTIONS"],
     allowHeaders: ["Authorization", "Content-Type"],
@@ -45,6 +51,80 @@ app.use(
 
 app.get("/health", (c) => c.text("ok"));
 app.get("/ready", (c) => c.text("ok"));
+
+// ── Admin: managed slot origins ────────────────────────────────────────────
+// Glimmung's reconciler writes per-project slot wildcards here. The endpoint
+// is intentionally NOT CORS-allowlisted — these are machine-to-machine calls
+// from inside the cluster, never a browser caller. AuthN is the inbound
+// caller's projected k8s SA token (RS256, signed by the AKS OIDC issuer),
+// validated against the (namespace, serviceAccount) allowlist.
+//
+// See nelsong6/glimmung#142 for the cross-repo contract.
+//
+// In TEST_MODE we skip registration entirely — test slots have no DB and
+// no inbound writers; a 404 is the correct surface there.
+if (process.env.TEST_MODE !== "true") {
+  app.use("/api/admin/origins/*", async (c, next) => {
+    const header = c.req.header("Authorization");
+    if (!header || !header.startsWith("Bearer ")) {
+      return c.json({ error: "missing bearer token" }, 401);
+    }
+    const token = header.slice("Bearer ".length).trim();
+    try {
+      // We don't currently surface the verified subject downstream — the
+      // allowlist gate is the only authorization check today, and `glimmung`
+      // is the only allowed caller. Persisting the subject on c.var would
+      // require Hono Variables typing; skip until we have a real second
+      // caller.
+      await verifyK8sSAToken(token);
+    } catch (e) {
+      return c.json({ error: `unauthorized: ${(e as Error).message}` }, 401);
+    }
+    await next();
+  });
+
+  app.get("/api/admin/origins", async (c) => {
+    const rows = await listManagedOrigins();
+    return c.json({ origins: rows });
+  });
+
+  app.get("/api/admin/origins/:project", async (c) => {
+    const project = c.req.param("project");
+    const wildcards = await listManagedOriginsByProject(project);
+    return c.json({ project, wildcards });
+  });
+
+  app.put("/api/admin/origins/:project", async (c) => {
+    const project = c.req.param("project");
+    let body: { wildcards?: unknown };
+    try {
+      body = (await c.req.json()) as { wildcards?: unknown };
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    if (
+      !Array.isArray(body.wildcards) ||
+      !body.wildcards.every((w) => typeof w === "string")
+    ) {
+      return c.json({ error: "body.wildcards must be a string array" }, 400);
+    }
+    try {
+      await replaceProjectOrigins(project, body.wildcards as string[]);
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 422);
+    }
+    return c.json({
+      project,
+      wildcards: await listManagedOriginsByProject(project),
+    });
+  });
+
+  app.delete("/api/admin/origins/:project", async (c) => {
+    const project = c.req.param("project");
+    await deleteProjectOrigins(project);
+    return c.json({ project, wildcards: [] });
+  });
+}
 
 // TEST_MODE flips every handler into fixture-data mode. Used by helm-issue
 // per-slot deployments at *.auth.dev.romaine.life so operators can cruise

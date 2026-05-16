@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, integer, uniqueIndex } from "drizzle-orm/pg-core";
 
 // Schema matches Better Auth's expected tables (regenerate with
 // `npx @better-auth/cli generate` if the auth.ts config gains plugins
@@ -67,3 +67,31 @@ export const jwks = pgTable("jwks", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   expiresAt: timestamp("expires_at"),
 });
+
+// Glimmung-managed slot origin allowlist. Each row contributes one entry
+// to Better Auth's `trustedOrigins` and Hono's CORS allowlist on
+// `/api/auth/*`. Owned by glimmung's reconciler — see nelsong6/glimmung#142.
+//
+// `project` is glimmung's project name (e.g. "tank-operator", "glimmung").
+// `wildcard` is a host pattern like "https://*.tank.dev.romaine.life" —
+// validated at write time in src/managed_origins.ts.
+//
+// Uniqueness on (project, wildcard) prevents accidental duplicates from
+// repeated upserts; glimmung's reconciler uses replace-set semantics, so a
+// project's wildcard list is whatever the latest PUT installed.
+export const managedOrigin = pgTable(
+  "managed_origin",
+  {
+    id: text("id").primaryKey(),
+    project: text("project").notNull(),
+    wildcard: text("wildcard").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    projectWildcardUnique: uniqueIndex("managed_origin_project_wildcard_unique").on(
+      table.project,
+      table.wildcard,
+    ),
+  }),
+);

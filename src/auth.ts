@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { jwt } from "better-auth/plugins";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "./db/client.js";
+import { getManagedOrigins } from "./managed_origins.js";
 
 const baseUrl = process.env.BASE_URL ?? "https://auth.romaine.life";
 
@@ -22,9 +23,21 @@ const fromEnv = (key: string): string =>
 
 // trustedOrigins. Better Auth validates passed-in `callbackURL` values
 // against this list, so a downstream app's cross-app sign-in redirect needs
-// its origin here or signInSocial throws "Invalid callbackURL". Prod ships
-// the known *.romaine.life apps; test slots pass `TRUSTED_ORIGINS` (comma-
-// separated, supports wildcards like `https://*.auth.dev.romaine.life`).
+// its origin here or signInSocial throws "Invalid callbackURL".
+//
+// Two sources of truth:
+//   1. `PROD_TRUSTED_ORIGINS` (below): auth.romaine.life's known peer apps,
+//      shipped as static config.
+//   2. `managed_origin` table: per-project slot wildcards reconciled by
+//      glimmung. See nelsong6/glimmung#142 for the cross-repo contract.
+//
+// `trustedOrigins` is registered as a function so the union is rebuilt at
+// request time. `getManagedOrigins` caches DB reads for 60s in-process, so
+// signInSocial doesn't pay a DB roundtrip per click.
+//
+// Test slots pass `TRUSTED_ORIGINS` (comma-separated) to bypass the
+// PROD list entirely; in that mode we still union with the managed set so
+// any project-owned slot wildcard remains valid even in a test slot.
 const PROD_TRUSTED_ORIGINS = [
   "https://homepage.romaine.life",
   "https://workout.romaine.life",
@@ -33,20 +46,33 @@ const PROD_TRUSTED_ORIGINS = [
   "https://tank.romaine.life",
   "https://fzt-frontend.romaine.life",
   "https://glimmung.romaine.life",
+  // NOTE: `https://*.glimmung.dev.romaine.life` lived here historically. It
+  // moves to the managed_origin table in nelsong6/glimmung#142 stage 4 —
+  // do not re-add it here; the migration guard rejects static slot
+  // wildcards under `.dev.romaine.life`.
   "https://*.glimmung.dev.romaine.life",
   "http://localhost:5173",
   "http://localhost:5500",
 ];
-const trustedOrigins = process.env.TRUSTED_ORIGINS
+const staticTrustedOrigins = process.env.TRUSTED_ORIGINS
   ? process.env.TRUSTED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
   : PROD_TRUSTED_ORIGINS;
+
+/** Exported for the CORS matcher in src/server.ts — same set, different
+ *  consumer. Keep both reads aligned so a project can't pass callbackURL
+ *  validation while failing the silent-exchange CORS preflight. */
+export async function resolveAllTrustedOrigins(): Promise<string[]> {
+  if (TEST_MODE) return staticTrustedOrigins;
+  const managed = await getManagedOrigins();
+  return [...staticTrustedOrigins, ...managed];
+}
 
 export const auth = betterAuth({
   baseURL: baseUrl,
   secret: process.env.BETTER_AUTH_SECRET ?? (TEST_MODE ? TEST_PLACEHOLDER : undefined),
   database: drizzleAdapter(db, { provider: "pg" }),
 
-  trustedOrigins,
+  trustedOrigins: resolveAllTrustedOrigins,
 
   advanced: {
     crossSubDomainCookies: {
