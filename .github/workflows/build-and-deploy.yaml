@@ -52,7 +52,8 @@ jobs:
           echo "TAG=${TAG}" >> $GITHUB_ENV
 
       - name: Bump image tag in k8s/values.yaml
-        run: sed -i "s|^  tag: .*|  tag: ${{ env.TAG }}|" k8s/values.yaml
+        run: |
+          sed -i "s|^  tag: .*|  tag: ${{ env.TAG }}|" k8s/values.yaml
 
       - name: Commit and push tag bump
         run: |
