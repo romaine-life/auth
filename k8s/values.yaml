@@ -3,7 +3,7 @@
 # templates/.
 image:
   repository: romainecr.azurecr.io/auth
-  tag: 5a997c3
+  tag: c28bebe
 
 # Wildcard cert + XListenerSet covering auth.dev.romaine.life AND
 # *.auth.dev.romaine.life. Provisioned once by the prod chart so
