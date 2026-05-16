@@ -13,4 +13,4 @@ resources:
 images:
 - name: romainecr.azurecr.io/auth
   newName: romainecr.azurecr.io/auth
-  newTag: 94dbdd2
+  newTag: d9a7567
