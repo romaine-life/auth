@@ -5,46 +5,67 @@ import { db } from "./db/client.js";
 
 const baseUrl = process.env.BASE_URL ?? "https://auth.romaine.life";
 
+// Cookie scope. Prod runs at auth.romaine.life and wants `.romaine.life` so
+// every subdomain (homepage, workout, glimmung, etc.) shares the session.
+// Test slots at *.auth.dev.romaine.life override this to
+// `auth.dev.romaine.life` so slot cookies never set on prod's `.romaine.life`.
+const cookieDomain = process.env.COOKIE_DOMAIN ?? "romaine.life";
+
+// Test slots run with TEST_MODE=true and don't provide real OAuth/secret
+// env. The server's request handlers branch on TEST_MODE before any
+// Better Auth call, so this `auth` object is constructed but never used in
+// test mode — we just need its init not to throw on missing env values.
+const TEST_MODE = process.env.TEST_MODE === "true";
+const TEST_PLACEHOLDER = "test-mode-only-not-a-real-credential";
+const fromEnv = (key: string): string =>
+  process.env[key] ?? (TEST_MODE ? TEST_PLACEHOLDER : "");
+
+// trustedOrigins. Better Auth validates passed-in `callbackURL` values
+// against this list, so a downstream app's cross-app sign-in redirect needs
+// its origin here or signInSocial throws "Invalid callbackURL". Prod ships
+// the known *.romaine.life apps; test slots pass `TRUSTED_ORIGINS` (comma-
+// separated, supports wildcards like `https://*.auth.dev.romaine.life`).
+const PROD_TRUSTED_ORIGINS = [
+  "https://homepage.romaine.life",
+  "https://workout.romaine.life",
+  "https://plants.romaine.life",
+  "https://investing.romaine.life",
+  "https://househunt.romaine.life",
+  "https://diagrams.romaine.life",
+  "https://tank.romaine.life",
+  "https://fzt-frontend.romaine.life",
+  "https://glimmung.romaine.life",
+  "https://*.glimmung.dev.romaine.life",
+  "http://localhost:5173",
+  "http://localhost:5500",
+];
+const trustedOrigins = process.env.TRUSTED_ORIGINS
+  ? process.env.TRUSTED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+  : PROD_TRUSTED_ORIGINS;
+
 export const auth = betterAuth({
   baseURL: baseUrl,
-  secret: process.env.BETTER_AUTH_SECRET,
+  secret: process.env.BETTER_AUTH_SECRET ?? (TEST_MODE ? TEST_PLACEHOLDER : undefined),
   database: drizzleAdapter(db, { provider: "pg" }),
 
-  // Apps that may call this auth service from a browser. Cookie scope is
-  // `.romaine.life` so the session works across every subdomain.
-  // Better Auth also validates passed-in `callbackURL` values against this
-  // list, so a downstream app's cross-app sign-in redirect needs its origin
-  // here or signInSocial throws "Invalid callbackURL".
-  trustedOrigins: [
-    "https://homepage.romaine.life",
-    "https://workout.romaine.life",
-    "https://plants.romaine.life",
-    "https://investing.romaine.life",
-    "https://househunt.romaine.life",
-    "https://diagrams.romaine.life",
-    "https://tank.romaine.life",
-    "https://fzt-frontend.romaine.life",
-    "https://glimmung.romaine.life",
-    "http://localhost:5173",
-    "http://localhost:5500",
-  ],
+  trustedOrigins,
 
   advanced: {
     crossSubDomainCookies: {
       enabled: true,
-      domain: "romaine.life",
+      domain: cookieDomain,
     },
   },
 
   socialProviders: {
     microsoft: {
-      clientId: process.env.MICROSOFT_CLIENT_ID!,
-      clientSecret: process.env.MICROSOFT_CLIENT_SECRET!,
+      clientId: fromEnv("MICROSOFT_CLIENT_ID"),
+      clientSecret: fromEnv("MICROSOFT_CLIENT_SECRET"),
       tenantId: "common",
     },
     google: {
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: fromEnv("GOOGLE_CLIENT_ID"),
+      clientSecret: fromEnv("GOOGLE_CLIENT_SECRET"),
     },
   },
 
