@@ -21,6 +21,7 @@ import {
   ExchangeError,
 } from "./service-exchange.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
+import { recordAdminOrigins, recordExchange, registry } from "./metrics.js";
 
 // Cross-origin fetches from .romaine.life apps that hit /api/auth/* to
 // pick up a JWT (silent-exchange path) or check session need CORS
@@ -57,6 +58,17 @@ app.use(
 app.get("/health", (c) => c.text("ok"));
 app.get("/ready", (c) => c.text("ok"));
 
+// Prometheus scrape endpoint. PodMonitor in
+// k8s/templates/podmonitor.yaml scrapes /metrics on the auth Service's
+// :http port. Exports the auth.romaine.life-side counters (exchange,
+// admin-origins) plus default Node/process/GC metrics — see
+// src/metrics.ts. Intentionally not CORS-allowlisted (cluster-internal
+// only); same posture as /api/admin/origins/*.
+app.get("/metrics", async (c) => {
+  const body = await registry.metrics();
+  return c.text(body, 200, { "Content-Type": registry.contentType });
+});
+
 // ── Admin: managed slot origins ────────────────────────────────────────────
 // Glimmung's reconciler writes per-project slot wildcards here. The endpoint
 // is intentionally NOT CORS-allowlisted — these are machine-to-machine calls
@@ -78,8 +90,10 @@ if (process.env.TEST_MODE !== "true") {
   const ADMIN_ALLOWLIST = parseAllowlist(process.env.K8S_ADMIN_SA_ALLOWLIST ?? "");
 
   app.use("/api/admin/origins/*", async (c, next) => {
+    const method = c.req.method;
     const header = c.req.header("Authorization");
     if (!header || !header.startsWith("Bearer ")) {
+      recordAdminOrigins(method, "unauthorized");
       return c.json({ error: "missing bearer token" }, 401);
     }
     const token = header.slice("Bearer ".length).trim();
@@ -94,9 +108,20 @@ if (process.env.TEST_MODE !== "true") {
         allowlist: ADMIN_ALLOWLIST,
       });
     } catch (e) {
+      recordAdminOrigins(method, "unauthorized");
       return c.json({ error: `unauthorized: ${(e as Error).message}` }, 401);
     }
     await next();
+    // Map the handler's final status into the bounded result label set.
+    // 4xx is split into "bad_request" so dashboards can tell a malformed
+    // body apart from an upstream/infra failure (5xx → error). 2xx →
+    // success. 3xx → success (none of these endpoints redirect today).
+    const status = c.res.status;
+    let result: "success" | "bad_request" | "error";
+    if (status >= 200 && status < 400) result = "success";
+    else if (status >= 400 && status < 500) result = "bad_request";
+    else result = "error";
+    recordAdminOrigins(method, result);
   });
 
   app.get("/api/admin/origins", async (c) => {
@@ -161,11 +186,13 @@ if (process.env.TEST_MODE !== "true") {
   app.post("/api/auth/exchange/k8s", async (c) => {
     const header = c.req.header("Authorization");
     if (!header || !header.startsWith("Bearer ")) {
+      recordExchange("denied_token");
       return c.json({ error: "missing bearer token" }, 401);
     }
     const saToken = header.slice("Bearer ".length).trim();
     try {
       const result = await exchangeServiceAccountToken(saToken);
+      recordExchange("success");
       return c.json({
         token: result.token,
         expires_at: result.expiresAt,
@@ -176,16 +203,17 @@ if (process.env.TEST_MODE !== "true") {
       });
     } catch (e) {
       if (e instanceof ExchangeError) {
-        // Reason string is intended for the orchestrator's structured
-        // log and the counter labels (Stage 5 observability); the
-        // human-readable message goes to the body for operator
-        // debugging.
+        // Reason string is the same closed set the Prometheus counter
+        // uses as its label — drives both the response body and the
+        // dashboard.
+        recordExchange(e.reason);
         return c.json(
           { error: e.message, reason: e.reason },
           e.status as Parameters<typeof c.json>[1],
         );
       }
       console.error("[/api/auth/exchange/k8s] unexpected:", e);
+      recordExchange("error_internal");
       return c.json({ error: "internal error", reason: "error_internal" }, 500);
     }
   });

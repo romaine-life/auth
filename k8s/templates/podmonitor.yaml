@@ -1,0 +1,29 @@
+{{- /*
+PodMonitor for the auth Deployment. Scrapes /metrics on the existing
+:http port (3000); the handler is registered in src/server.ts and
+exports the closed-set counters declared in src/metrics.ts plus
+prom-client's default Node/process/GC metrics (prefixed `auth_`).
+
+Same shape as tank-operator's PodMonitor (k8s/templates/podmonitor-*).
+The kube-prometheus-stack in the `monitoring` namespace picks this up
+via its default release-label selector.
+
+Stage 5 completion for the auth side of nelsong6/tank-operator#486.
+*/}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: auth
+  namespace: auth
+  labels:
+    app.kubernetes.io/name: auth
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: auth
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

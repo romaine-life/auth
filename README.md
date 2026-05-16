@@ -23,6 +23,7 @@ investing, house-hunt, and fzt-frontend.
 - `PUT  /api/admin/origins/{project}` — replace a project's slot wildcards (k8s-SA-auth, idempotent)
 - `DELETE /api/admin/origins/{project}` — drop a project's slot wildcards (k8s-SA-auth)
 - `POST /api/auth/exchange/k8s` — exchange a session-pod's projected SA token for an auth.romaine.life `role=service` JWT
+- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
 
