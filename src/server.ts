@@ -17,7 +17,6 @@ import { account, session, user } from "./db/schema.js";
 const CROSS_APP_ORIGINS = [
   "https://homepage.romaine.life",
   "https://workout.romaine.life",
-  "https://plants.romaine.life",
   "https://investing.romaine.life",
   "https://diagrams.romaine.life",
   "https://tank.romaine.life",
@@ -196,7 +195,6 @@ TYRELL · NEXUS-7</div>`);
 const ROMAINE_APPS = [
   { host: "homepage.romaine.life",     name: "homepage" },
   { host: "workout.romaine.life",      name: "kill-me" },
-  { host: "plants.romaine.life",       name: "plant-agent" },
   { host: "investing.romaine.life",    name: "investing" },
   { host: "diagrams.romaine.life",     name: "diagrams" },
   { host: "tank.romaine.life",         name: "tank-operator" },
@@ -1215,7 +1213,6 @@ const TEST_AUTH_STATE: AuthState = {
     apps: JSON.stringify({
       homepage: { theme: "dark" },
       "kill-me": { tdee: 2200 },
-      "plant-agent": { mood: "ferns" },
       investing: {},
     }),
   },

@@ -28,7 +28,6 @@ const fromEnv = (key: string): string =>
 const PROD_TRUSTED_ORIGINS = [
   "https://homepage.romaine.life",
   "https://workout.romaine.life",
-  "https://plants.romaine.life",
   "https://investing.romaine.life",
   "https://diagrams.romaine.life",
   "https://tank.romaine.life",
