@@ -30,5 +30,9 @@ wildcardCertificate:
 # while tofu is being applied for the first time — better than a
 # silently-misconfigured Cluster that thinks it's backing up but isn't.
 backups:
-  storageAccount: ""
+  # Provisioned by tofu/backups.tf — `authdbbackups<random>`. Update
+  # this whenever tofu replaces the storage account (rare; happens on
+  # delete/re-import only). The matching KV connection-string secret
+  # tracks the same account automatically.
+  storageAccount: "authdbbackupspjbrsd"
   container: "auth-db"
