@@ -46,11 +46,10 @@ const PROD_TRUSTED_ORIGINS = [
   "https://tank.romaine.life",
   "https://fzt-frontend.romaine.life",
   "https://glimmung.romaine.life",
-  // NOTE: `https://*.glimmung.dev.romaine.life` lived here historically. It
-  // moves to the managed_origin table in nelsong6/glimmung#142 stage 4 —
-  // do not re-add it here; the migration guard rejects static slot
-  // wildcards under `.dev.romaine.life`.
-  "https://*.glimmung.dev.romaine.life",
+  // Per-project slot wildcards under `.dev.romaine.life` do not belong
+  // in this list — they are reconciled into the managed_origin table
+  // by glimmung. See nelsong6/glimmung#142, and the CI gate at
+  // scripts/check-static-slot-origins.mjs that enforces this.
   "http://localhost:5173",
   "http://localhost:5500",
 ];
