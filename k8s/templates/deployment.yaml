@@ -23,7 +23,7 @@ spec:
       serviceAccountName: auth
       containers:
         - name: auth
-          image: romainecr.azurecr.io/auth:placeholder
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
