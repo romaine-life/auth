@@ -9,14 +9,6 @@
 # CNPG to inheritFromAzureAD. This file only provisions the Azure side;
 # the chart still uses the connection string today.
 
-# Look up the AKS cluster's OIDC issuer URL. Cluster is provisioned by
-# infra-bootstrap; we read it via data source so this stack doesn't need
-# the infra-bootstrap remote state.
-data "azurerm_kubernetes_cluster" "infra" {
-  name                = "infra-aks"
-  resource_group_name = "infra"
-}
-
 # Dedicated UAMI for CNPG backup writes. Scope is minimal:
 # Storage Blob Data Contributor on the single container that holds
 # auth-db backups.
@@ -34,7 +26,7 @@ resource "azurerm_federated_identity_credential" "auth_db_backup_writer" {
   resource_group_name = azurerm_resource_group.auth.name
   parent_id           = azurerm_user_assigned_identity.auth_db_backup_writer.id
   audience            = ["api://AzureADTokenExchange"]
-  issuer              = data.azurerm_kubernetes_cluster.infra.oidc_issuer_url
+  issuer              = var.aks_oidc_issuer_url
   subject             = "system:serviceaccount:auth:auth-db"
 }
 
