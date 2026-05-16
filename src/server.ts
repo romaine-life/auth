@@ -114,6 +114,21 @@ const SHELL = (title: string, body: ReturnType<typeof html>) => html`<!DOCTYPE h
       .btn-danger { color: var(--danger); border-color: var(--muted); }
       .btn-danger:hover { border-color: var(--danger); background: rgba(255,77,77,0.05);
                           box-shadow: 0 0 16px rgba(255,77,77,0.15); }
+      /* Microsoft brand-compliant "Sign in with Microsoft" button.
+         Dark variant: #2F2F2F bg, #FFFFFF text, Segoe UI Regular 15px,
+         41px tall, 21px logo with 12px padding. Per Microsoft's
+         identity-platform/howto-add-branding-in-apps spec. */
+      .btn-microsoft {
+        display: inline-flex; align-items: center; gap: 12px;
+        height: 41px; padding: 0 12px;
+        background: #2F2F2F; color: #FFFFFF;
+        border: 1px solid #8C8C8C;
+        font-family: "Segoe UI", "Segoe UI Web (West European)",
+                     -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+        font-size: 15px; font-weight: 400; letter-spacing: normal;
+        text-transform: none; cursor: pointer;
+      }
+      .btn-microsoft:hover { background: #1f1f1f; box-shadow: 0 0 16px rgba(255,255,255,0.12); }
       .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;
                  justify-content: center; }
       .badge {
@@ -168,8 +183,10 @@ const IRIS = raw(`<svg class="iris" width="80" height="80" viewBox="0 0 80 80" f
   <line x1="66" y1="40" x2="78" y2="40" stroke="currentColor" stroke-width="0.5" opacity="0.5"/>
 </svg>`);
 
-const MSFT_LOGO = raw(`<svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>`);
-const GOOGLE_LOGO = raw(`<svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.26c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/></svg>`);
+// Microsoft sign-in button per the official brand guidelines:
+// https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps
+// 21x21 logo, four squares with the spec colors (#F35325 / #81BC06 / #05A6F0 / #FFBA08).
+const MSFT_LOGO = raw(`<svg class="ms-logo" width="21" height="21" viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#F35325"/><rect x="11" y="1" width="9" height="9" fill="#81BC06"/><rect x="1" y="11" width="9" height="9" fill="#05A6F0"/><rect x="11" y="11" width="9" height="9" fill="#FFBA08"/></svg>`);
 
 app.get("/", async (c) => {
   const result = await auth.api.getSession({ headers: c.req.raw.headers });
@@ -190,10 +207,7 @@ app.get("/", async (c) => {
       </p>
       <div class="actions">
         <form method="POST" action="/sign-in/microsoft" style="display: inline">
-          <button class="btn" type="submit">${MSFT_LOGO} Begin · Microsoft</button>
-        </form>
-        <form method="POST" action="/sign-in/google" style="display: inline">
-          <button class="btn" type="submit">${GOOGLE_LOGO} Begin · Google</button>
+          <button class="btn-microsoft" type="submit">${MSFT_LOGO} Sign in with Microsoft</button>
         </form>
       </div>
       <footer>
@@ -281,12 +295,12 @@ app.get("/", async (c) => {
 });
 
 // Trigger Better Auth's social sign-in server-side, then 302 the browser to
-// the Microsoft/Google /authorize URL it returns. Keeps the user on this
-// origin (no client JS needed to POST).
-app.post("/sign-in/:provider{microsoft|google}", async (c) => {
-  const provider = c.req.param("provider") as "microsoft" | "google";
+// the Microsoft /authorize URL it returns. Keeps the user on this origin
+// (no client JS needed to POST). Google config remains in auth.ts so it's
+// a one-line revert if we ever bring it back.
+app.post("/sign-in/microsoft", async (c) => {
   const result = await auth.api.signInSocial({
-    body: { provider, callbackURL: "/" },
+    body: { provider: "microsoft", callbackURL: "/" },
   });
   if (!result?.url) return c.text("sign-in failed", 500);
   return c.redirect(result.url);
