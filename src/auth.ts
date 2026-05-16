@@ -30,7 +30,6 @@ const PROD_TRUSTED_ORIGINS = [
   "https://workout.romaine.life",
   "https://plants.romaine.life",
   "https://investing.romaine.life",
-  "https://househunt.romaine.life",
   "https://diagrams.romaine.life",
   "https://tank.romaine.life",
   "https://fzt-frontend.romaine.life",
