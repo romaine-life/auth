@@ -10,6 +10,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push"
   },
@@ -19,6 +20,7 @@
     "better-auth": "^1.6.0",
     "drizzle-orm": "^0.45.0",
     "hono": "^4.6.0",
+    "jose": "^5.9.0",
     "postgres": "^3.4.5"
   },
   "devDependencies": {

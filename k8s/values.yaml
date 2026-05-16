@@ -43,3 +43,22 @@ backups:
   # inheritFromAzureAD path then picks up the projected token at
   # /var/run/secrets/azure/tokens/azure-identity-token.
   workloadIdentityClientId: "4d3946f7-3845-4cb4-84f7-f6210dda6f01"
+
+# Glimmung-managed slot origin admin surface. Inbound auth on
+# /api/admin/origins/* validates a k8s ServiceAccount JWT signed by the
+# cluster OIDC issuer below. See nelsong6/glimmung#142.
+k8sOidc:
+  # AKS OIDC discovery issuer. Same issuer that powers Azure workload
+  # identity federation for AKS — the cluster API server signs SA tokens
+  # against this OIDC keypair, and Azure-side workload-identity federation
+  # already trusts it. Source of truth: any project's
+  # `native_standby_workload_identity_status.issuer` field in glimmung.
+  issuer: "https://westus2.oic.prod-aks.azure.com/2236b5e4-81d2-4d82-bde5-17b1037999ea/5aced6d5-4299-421b-84a9-6638aebbf4f0/"
+  # Audience claim that inbound admin tokens must carry. Glimmung's
+  # deployment mounts a projected SA token with this exact audience so
+  # that a stolen glimmung token cannot be replayed against any other
+  # JWT-validating service in the cluster.
+  adminAudience: "https://auth.romaine.life"
+  # Allowed (namespace, serviceAccount) callers, comma-separated.
+  # Glimmung is the only authorized writer today.
+  adminSaAllowlist: "glimmung/glimmung"
