@@ -3,6 +3,7 @@ import { jwt } from "better-auth/plugins";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "./db/client.js";
 import { getManagedOrigins } from "./managed-origins.js";
+import { isReservedServiceEmail } from "./synthetic-email.js";
 
 const baseUrl = process.env.BASE_URL ?? "https://auth.romaine.life";
 
@@ -100,11 +101,42 @@ export const auth = betterAuth({
       // romaine.life accepts them until an admin promotes them via the
       // /admin console. This preserves the allowlist behavior we used to
       // get from `romaine-life-admin-emails` without the per-app KV mount.
+      //
+      // `service` is reserved for k8s service-principal users minted by
+      // /api/auth/exchange/k8s (see src/service-exchange.ts). Apps that
+      // accept service callers gate explicitly on role=service so a
+      // human role and a service role can never share a route by
+      // accident. See nelsong6/tank-operator#486.
       role: { type: "string", defaultValue: "pending" },
       // JSON blob for per-app preferences. Apps namespace under their own key,
       // e.g. apps.kill-me = { tdee: 2200 }. Apps that need richer per-user data
       // keep their own table keyed by user.id.
       apps: { type: "string", defaultValue: "{}" },
+    },
+  },
+
+  databaseHooks: {
+    user: {
+      create: {
+        // Refuse any user-create whose email is in a synthetic service
+        // domain. Defense-in-depth against an IdP (Microsoft, Google)
+        // returning an email under our reserved namespace and Better
+        // Auth happily upserting it as a human row — that would collide
+        // with the structurally-distinct row that /api/auth/exchange/k8s
+        // intends to own. Service principals are inserted via raw
+        // db.insert in service-exchange.ts and intentionally bypass this
+        // hook.
+        before: async (userData) => {
+          const email = (userData as { email?: string }).email ?? "";
+          if (isReservedServiceEmail(email)) {
+            throw new Error(
+              `email ${email} is in a reserved service-principal domain; ` +
+                `human sign-in under this namespace is refused by construction`,
+            );
+          }
+          return { data: userData };
+        },
+      },
     },
   },
 

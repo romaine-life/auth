@@ -22,6 +22,7 @@ investing, house-hunt, and fzt-frontend.
 - `GET  /api/admin/origins[/{project}]` — list glimmung-managed slot wildcards (k8s-SA-auth)
 - `PUT  /api/admin/origins/{project}` — replace a project's slot wildcards (k8s-SA-auth, idempotent)
 - `DELETE /api/admin/origins/{project}` — drop a project's slot wildcards (k8s-SA-auth)
+- `POST /api/auth/exchange/k8s` — exchange a session-pod's projected SA token for an auth.romaine.life `role=service` JWT
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
 
@@ -43,6 +44,32 @@ a stolen token cannot be replayed against another JWT verifier.
 
 See [nelsong6/glimmung#142](https://glimmung.romaine.life/i/glimmung/142) for
 the cross-repo architecture.
+
+## Service-principal exchange
+
+Kubernetes session pods (today: tank-operator) authenticate to this service
+via `POST /api/auth/exchange/k8s` and receive a normal auth.romaine.life JWT
+with `role=service`. Apps that opt in accept service callers by extending
+their role gate to include `service`; the JWT is otherwise identical in shape
+to a human JWT (same `iss`, same JWKS, same verifier) so an app that ignores
+service callers needs no code changes.
+
+Inbound bearer is the pod's projected SA token (RS256, audience pinned to
+`https://auth.romaine.life` per `K8S_SERVICE_AUDIENCE`, namespace+SA pinned
+per `K8S_SERVICE_SA_ALLOWLIST`). The handler reads the bound pod's
+`tank-operator/owner-email` and `tank-operator/session-id` annotations at
+exchange time — cross-namespace `pods/get` RBAC for each consumer namespace
+is scaffolded from `k8sOidc.serviceConsumerNamespaces` in `k8s/values.yaml`.
+
+Service-principal users are stored in Better Auth's user table under a
+reserved synthetic email (`pod-<session-id>@service.<consumer>.romaine.life`)
+that no human IdP can squat — the `databaseHooks.user.create.before` guard
+in `src/auth.ts` refuses any IdP-sourced user-create whose email is in a
+reserved domain. The issued JWT carries an extra `actor_email` claim with
+the human owner so downstream services can audit and scope per-owner.
+
+See [nelsong6/tank-operator#486](https://github.com/nelsong6/tank-operator/issues/486)
+for the cross-repo architecture and rollout plan.
 
 ## How apps consume this
 

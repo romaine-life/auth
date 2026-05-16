@@ -76,6 +76,23 @@ spec:
               value: {{ .Values.k8sOidc.adminAudience | quote }}
             - name: K8S_ADMIN_SA_ALLOWLIST
               value: {{ .Values.k8sOidc.adminSaAllowlist | quote }}
+            # Service-principal exchange (/api/auth/exchange/k8s). Inbound
+            # SA tokens from session pods (today: tank-operator) trade for
+            # an auth.romaine.life JWT with role=service. Separate audience
+            # + allowlist from the admin path so an admin token cannot be
+            # replayed as a service principal and vice versa. See
+            # nelsong6/tank-operator#486.
+            - name: K8S_SERVICE_AUDIENCE
+              value: {{ .Values.k8sOidc.serviceAudience | quote }}
+            - name: K8S_SERVICE_SA_ALLOWLIST
+              value: {{ .Values.k8sOidc.serviceSaAllowlist | quote }}
+            # Trust the in-cluster CA so native fetch's TLS validates the
+            # apiserver cert when src/k8s-pod.ts calls
+            # https://kubernetes.default.svc. Avoids pulling in undici
+            # for a per-request Agent. The file is mounted automatically
+            # via the default ServiceAccount token projection.
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           resources:
             requests:
               cpu: 50m
