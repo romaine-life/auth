@@ -3,4 +3,4 @@
 # templates/.
 image:
   repository: romainecr.azurecr.io/auth
-  tag: 4779d43
+  tag: 7498bc5
