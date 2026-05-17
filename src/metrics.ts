@@ -83,3 +83,23 @@ export const authAdminBotTokensMintedTotal = new Counter({
 export function recordAdminBotTokenMint(): void {
   authAdminBotTokensMintedTotal.inc();
 }
+
+// Admin service-token mint (/admin/service-tokens). Sibling surface to
+// the bot-token mint above, but produces a `role=service` JWT carrying
+// `actor_email=<admin's email>` so the token passes the verifier
+// contract that consumers like `nelsong6/mcp-github` pin on
+// (`role == "service"` + non-empty `actor_email`). Separate counter
+// because the operational signal is different: a bot-token spike is
+// "human debugging the apps"; a service-token spike is "human reaching
+// past the service-exchange surface to call an MCP from a workstation."
+// Same label-free, rare-event posture — per-mint identity lives in the
+// structured `console.warn` line.
+export const authAdminServiceTokensMintedTotal = new Counter({
+  name: "auth_admin_service_tokens_minted_total",
+  help: "Service tokens minted via /admin/service-tokens (24h, role=service, purpose=bot, actor_email=<admin>).",
+  registers: [registry],
+});
+
+export function recordAdminServiceTokenMint(): void {
+  authAdminServiceTokensMintedTotal.inc();
+}
