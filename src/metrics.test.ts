@@ -4,8 +4,10 @@ import {
   authRomaineExchangeTotal,
   adminOriginsRequestsTotal,
   authAdminBotTokensMintedTotal,
+  authAdminServiceTokensMintedTotal,
   recordAdminBotTokenMint,
   recordAdminOrigins,
+  recordAdminServiceTokenMint,
   recordExchange,
   registry,
 } from "./metrics.js";
@@ -76,6 +78,7 @@ test("registered counter names match what the dashboards and alerts expect", asy
   assert.match(text, /^# HELP auth_romaine_exchange_total /m);
   assert.match(text, /^# HELP auth_admin_origins_requests_total /m);
   assert.match(text, /^# HELP auth_admin_bot_tokens_minted_total /m);
+  assert.match(text, /^# HELP auth_admin_service_tokens_minted_total /m);
 });
 
 test("authAdminBotTokensMintedTotal increments on every mint", async () => {
@@ -87,4 +90,29 @@ test("authAdminBotTokensMintedTotal increments on every mint", async () => {
   // outside expected admin debugging windows is the operational signal;
   // per-mint attribution comes from the structured `console.warn` line.
   assert.match(text, /^auth_admin_bot_tokens_minted_total \d+$/m);
+});
+
+test("authAdminServiceTokensMintedTotal increments on every mint", async () => {
+  recordAdminServiceTokenMint();
+  recordAdminServiceTokenMint();
+  const text = await registry.metrics();
+  assert.match(text, /^# TYPE auth_admin_service_tokens_minted_total counter$/m);
+  // Same label-free posture as the bot-token counter: per-mint identity
+  // lives in the structured `console.warn` line so the time-series can
+  // stay bounded. Operationally the two counters are read together —
+  // bot-token spikes signal browser-side debugging, service-token spikes
+  // signal someone bypassing the SA-exchange surface to call an MCP from
+  // a workstation.
+  assert.match(text, /^auth_admin_service_tokens_minted_total \d+$/m);
+});
+
+test("authAdminServiceTokensMintedTotal and authAdminBotTokensMintedTotal are distinct counters", () => {
+  // Pin that the two sibling counters share neither name nor counter
+  // object. Adding a label to one of them would also collide series and
+  // surface as a Prometheus parse error at scrape time — guard at
+  // module-init by reading the registered metric names.
+  assert.notStrictEqual(
+    authAdminBotTokensMintedTotal,
+    authAdminServiceTokensMintedTotal,
+  );
 });

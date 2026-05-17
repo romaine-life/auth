@@ -25,6 +25,7 @@ import { isReservedServiceEmail } from "./synthetic-email.js";
 import {
   recordAdminBotTokenMint,
   recordAdminOrigins,
+  recordAdminServiceTokenMint,
   recordExchange,
   registry,
 } from "./metrics.js";
@@ -1371,6 +1372,72 @@ const ADMIN_BOT_TOKEN_SCRIPT = raw(`
 })();
 `);
 
+// Sibling of ADMIN_BOT_TOKEN_SCRIPT for the service-token card. Kept
+// as a second IIFE rather than parameterizing the bot-token script:
+// the two cards have distinct ids (`#mint-service-token` vs
+// `#mint-bot-token`) and distinct POST targets, and folding them into
+// one factory would force the script to know about both UI shapes for
+// no real reuse. Easier to ship and easier to delete the service-token
+// surface independently if it ever migrates onto the real SA-exchange
+// flow.
+const ADMIN_SERVICE_TOKEN_SCRIPT = raw(`
+(() => {
+  const btn = document.getElementById("mint-service-token");
+  if (!btn) return;
+  const result = document.getElementById("service-token-result");
+  const meta = document.getElementById("service-token-meta");
+  const jwt = document.getElementById("service-token-jwt");
+  const copy = document.getElementById("service-token-copy");
+  const clear = document.getElementById("service-token-clear");
+  const err = document.getElementById("service-token-error");
+
+  const fmtExp = (exp) => {
+    const d = new Date(exp * 1000);
+    const iso = d.toISOString().slice(0, 16).replace("T", " ") + " UTC";
+    const hours = Math.round((exp - Date.now() / 1000) / 360) / 10;
+    return iso + " · " + hours + "h from now";
+  };
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    err.style.display = "none";
+    err.textContent = "";
+    try {
+      const res = await fetch("/admin/service-tokens", { method: "POST", credentials: "same-origin" });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || ("HTTP " + res.status));
+      }
+      meta.textContent = "expires " + fmtExp(body.expires_at) + " · role=service · purpose=bot · actor=" + (body.actor_email || "?");
+      jwt.value = body.token;
+      result.style.display = "";
+    } catch (e) {
+      err.textContent = "mint failed: " + (e && e.message ? e.message : String(e));
+      err.style.display = "";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  copy && copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(jwt.value);
+      const orig = copy.textContent;
+      copy.textContent = "copied";
+      setTimeout(() => { copy.textContent = orig; }, 1400);
+    } catch (_) {
+      jwt.select();
+    }
+  });
+
+  clear && clear.addEventListener("click", () => {
+    jwt.value = "";
+    meta.textContent = "";
+    result.style.display = "none";
+  });
+})();
+`);
+
 // ── HTML helpers ──────────────────────────────────────────────────────────
 
 const SHELL = (title: string, body: ReturnType<typeof html>) => html`<!DOCTYPE html>
@@ -1896,10 +1963,45 @@ app.get("/admin", async (c) => {
             </div>
           </div>
         </section>
+
+        <section class="section col-span-2">
+          <div class="section-head">
+            <span class="title"><span class="sigil">//</span>Service token</span>
+            <span class="count">24h · role=service · purpose=bot</span>
+          </div>
+          <div class="section-body">
+            <div class="admin-card" id="service-token-card">
+              <p class="bot-token-lede">
+                Sibling to the bot token, but issued with
+                <code>role=service</code> and
+                <code>actor_email=&lt;your email&gt;</code> so the JWT passes the
+                verifier contract that
+                <code>mcp-github</code> (and other service-only MCPs) pin on.
+                Use when you need to call those MCPs from a workstation
+                without setting up the full k8s service-account exchange.
+                Same revocation path as the bot token —
+                <code>az keyvault key rotate auth-jwt-signing</code>.
+              </p>
+              <div class="admin-actions">
+                <button class="admin-btn" id="mint-service-token">Mint service token</button>
+              </div>
+              <div class="bot-token-result" id="service-token-result" style="display:none">
+                <div class="bot-token-meta" id="service-token-meta"></div>
+                <textarea class="bot-token-jwt" id="service-token-jwt" readonly rows="6"></textarea>
+                <div class="admin-actions">
+                  <button class="admin-btn" id="service-token-copy" type="button">Copy</button>
+                  <button class="admin-btn" id="service-token-clear" type="button">Clear</button>
+                </div>
+              </div>
+              <div class="bot-token-error" id="service-token-error" style="display:none"></div>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
     ${footer()}
     <script>${ADMIN_BOT_TOKEN_SCRIPT}</script>
+    <script>${ADMIN_SERVICE_TOKEN_SCRIPT}</script>
   `));
 });
 
@@ -1969,6 +2071,102 @@ app.post("/admin/bot-tokens", async (c) => {
     expires_at: signed.exp,
     expires_in_hours: 24,
     purpose: "bot",
+  });
+});
+
+// Service-token mint. Sibling of /admin/bot-tokens above, but produces
+// a `role=service` JWT carrying `actor_email=<admin's email>` so it
+// passes the verifier contract that mcp-github (and any future
+// service-only MCP) enforces:
+//
+//     role == "service"  AND  actor_email is non-empty
+//
+// The admin's user row itself is unchanged — `sub`, `email`, and `name`
+// on the JWT remain the admin's identity, while `role=service` +
+// `actor_email=<admin email>` make the token a self-actor service
+// principal. The semantic is "the admin is acting as a service
+// principal on their own behalf" — the human-and-machine in this
+// break-glass surface are the same person, and `actor_email` carries
+// the audit trail downstream consumers want.
+//
+// This intentionally does NOT route through the k8s service-exchange
+// flow in src/service-exchange.ts: that flow exists for pods whose
+// identity comes from a projected SA token and whose actor is encoded
+// in pod annotations. An admin at a workstation has neither, and the
+// SA-exchange's synthetic-email/pod-lineage machinery would be
+// machinery-for-machinery's-sake here. If a future use case wants a
+// long-lived service identity for a named admin (separate user row,
+// reusable `sub`, etc.), the right move is to extend
+// `service-exchange.ts` with a `mode: "admin-bot"` consumer rather
+// than evolve this surface.
+const SERVICE_TOKEN_TTL_SECONDS = 24 * 60 * 60;
+
+app.post("/admin/service-tokens", async (c) => {
+  const gate = await requireAdmin(c);
+  if ("status" in gate) {
+    return c.json({ error: "admin only" }, gate.status === 302 ? 401 : 403);
+  }
+  if (TEST_MODE) {
+    // Test slots have no JWKS / signing key — return a placeholder so the
+    // UI button still demonstrates the flow without standing up Better Auth.
+    return c.json({
+      token: "test-mode-service-token-placeholder",
+      expires_at: Math.floor(Date.now() / 1e3) + SERVICE_TOKEN_TTL_SECONDS,
+      expires_in_hours: 24,
+      purpose: "bot",
+      role: "service",
+      actor_email: (gate.user as { email?: string }).email ?? "test@romaine.life",
+    });
+  }
+
+  const u = gate.user as typeof gate.user & { role?: string; apps?: string };
+  // Service tokens conventionally carry an empty `apps` claim — per-app
+  // prefs are a human concept and a service principal has none. Mirrors
+  // the service-exchange flow in src/service-exchange.ts, which also
+  // passes `apps: {}` for the same reason.
+
+  let signed;
+  try {
+    signed = await mintAuthJwt({
+      sub: u.id,
+      email: u.email,
+      name: u.name,
+      role: "service",
+      apps: {},
+      actorEmail: u.email,
+      purpose: "bot",
+      ttlSeconds: SERVICE_TOKEN_TTL_SECONDS,
+    });
+  } catch (e) {
+    console.error("[/admin/service-tokens] mintAuthJwt failed:", e);
+    return c.json({ error: "failed to mint token" }, 500);
+  }
+
+  recordAdminServiceTokenMint();
+  // Structured per-mint audit line. Same shape as the bot-token mint's
+  // audit line, plus the actor_email claim (which equals the admin's
+  // own email here — kept explicit so a future change that decouples
+  // actor from caller will surface in the log diff). `purpose=bot` is
+  // intentional: it tells downstream audit pipelines that this is a
+  // human-minted convenience token, not a pod-issued exchange token.
+  console.warn(
+    "[/admin/service-tokens] minted:",
+    JSON.stringify({
+      email: u.email,
+      actor_email: u.email,
+      exp: signed.exp,
+      role: "service",
+      purpose: "bot",
+    }),
+  );
+
+  return c.json({
+    token: signed.token,
+    expires_at: signed.exp,
+    expires_in_hours: 24,
+    purpose: "bot",
+    role: "service",
+    actor_email: u.email,
   });
 });
 

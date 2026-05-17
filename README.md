@@ -24,7 +24,8 @@ investing, house-hunt, and fzt-frontend.
 - `DELETE /api/admin/origins/{project}` — drop a project's slot wildcards (k8s-SA-auth)
 - `POST /api/auth/exchange/k8s` — exchange a session-pod's projected SA token for an auth.romaine.life `role=service` JWT
 - `POST /admin/bot-tokens` — admin-only: mint a 24h bot token (`role=admin`, `purpose=bot`) for break-glass CLI / curl use
-- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
+- `POST /admin/service-tokens` — admin-only: mint a 24h service token (`role=service`, `purpose=bot`, `actor_email=<admin>`) for calling service-only MCPs (e.g. `mcp-github`) from a workstation
+- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
 
@@ -106,6 +107,47 @@ steady-state cost.
 Observability: `auth_admin_bot_tokens_minted_total` (Prometheus, label-free —
 the per-mint identity is captured by a `console.warn` line that includes the
 admin's email, so structured-log search is the audit path).
+
+## Admin service tokens (CLI auth for service-only MCPs)
+
+`POST /admin/service-tokens` is the sibling of `/admin/bot-tokens` for the
+case where the downstream consumer's verifier pins on `role=service` rather
+than `role=admin`. The motivating consumer is
+[`nelsong6/mcp-github`](https://github.com/nelsong6/mcp-github), whose
+JWT validator requires:
+
+```
+role == "service"  AND  actor_email is non-empty
+```
+
+The bot-token mint produces `role=admin` and never carries `actor_email`
+(the helper in `src/mint-jwt-helpers.ts` forbids it for non-service
+tokens), so an admin-minted bot token can't satisfy that contract. The
+service-token mint produces `role=service` and sets
+`actor_email=<admin's email>` — the admin is acting as a service
+principal on their own behalf, and the audit field carries the human
+responsible.
+
+Flow is the same as bot tokens: sign in to `/admin`, click **Mint service
+token**, paste the resulting JWT into `Authorization: Bearer …`. TTL is
+24 hours and revocation is the same key-rotation path.
+
+Design note: this surface intentionally does NOT route through the k8s
+service-account exchange (`/api/auth/exchange/k8s`). That flow exists for
+pods whose identity comes from a projected SA token and whose actor is
+encoded in pod annotations — an admin at a workstation has neither, and
+threading the SA-exchange's synthetic-email / pod-lineage machinery
+through it would be machinery for machinery's sake. If a future use case
+wants a long-lived service identity for a named admin (separate user
+row, reusable `sub`, etc.), the right move is to add a
+`mode: "admin-bot"` consumer to `src/service-exchange.ts` rather than
+evolve this surface.
+
+Observability: `auth_admin_service_tokens_minted_total` (Prometheus,
+label-free, same posture as the bot-token counter). A separate
+`console.warn` line per mint carries the admin's email and the issued
+`actor_email` (equal today, kept explicit so a future decoupling
+surfaces in the log diff).
 
 ## How apps consume this
 
