@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/*.test.ts",
     "check:static-slot-origins": "node scripts/check-static-slot-origins.mjs",
+    "check:signjwt-callsites": "node scripts/check-signjwt-callsites.mjs",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push"
   },

@@ -36,18 +36,11 @@ export function serviceUserId(consumer: string, sessionId: string): string {
   return `svc:${consumer}:${sessionId}`;
 }
 
-/** Decode the `exp` claim from a compact JWS. The body is the second
- *  segment, base64url-encoded JSON. Throws on a malformed JWT or a
- *  non-numeric `exp` — defensive against signer bugs that would
- *  otherwise hand a caller a token they couldn't schedule a refresh
- *  for. */
-export function extractExpClaim(jwt: string): number {
-  const parts = jwt.split(".");
-  if (parts.length !== 3) throw new Error("malformed JWT");
-  const payloadJson = Buffer.from(parts[1], "base64url").toString("utf8");
-  const payload = JSON.parse(payloadJson) as { exp?: number };
-  if (typeof payload.exp !== "number") {
-    throw new Error("JWT payload missing numeric exp claim");
-  }
-  return payload.exp;
-}
+// `extractExpClaim` used to live here. It was a runtime workaround for
+// the era when mint sites called Better Auth's `signJWT` directly and
+// needed to re-decode the JWT to learn its `exp`. With every mint now
+// routed through `mintAuthJwt` (src/mint-jwt.ts) — which stamps and
+// returns `iat`/`exp` on the result — there is no caller left. Deleted
+// rather than kept as a "just in case" helper, per
+// docs/migration-policy.md (no runtime reads whose purpose is to keep
+// old behavior working).

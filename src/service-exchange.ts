@@ -3,7 +3,8 @@
 // Routes the inbound bearer through the existing k8s-auth verifier,
 // resolves the bound pod's lineage annotations, idempotently upserts a
 // Better Auth user under a reserved synthetic-email domain, and mints
-// a standard auth.romaine.life JWT via Better Auth's signJWT API.
+// a standard auth.romaine.life JWT through the shared `mintAuthJwt`
+// helper (src/mint-jwt.ts).
 //
 // The issued JWT is shaped exactly like a human auth.romaine.life JWT
 // (same `iss`, `aud`, JWKS-published signing key) so downstream apps can
@@ -14,15 +15,14 @@
 // See nelsong6/tank-operator#486 for the full plan.
 
 import { eq } from "drizzle-orm";
-import { auth } from "./auth.js";
 import { db } from "./db/client.js";
 import { user } from "./db/schema.js";
 import { parseAllowlist, verifyK8sSAToken } from "./k8s-auth.js";
 import { readPodLineage, type PodLineage } from "./k8s-pod.js";
+import { mintAuthJwt } from "./mint-jwt.js";
 import { buildServiceEmail, buildServiceName } from "./synthetic-email.js";
 import {
   ExchangeError,
-  extractExpClaim,
   serviceUserId,
   type ExchangeFailureReason,
 } from "./service-exchange-helpers.js";
@@ -30,7 +30,6 @@ import {
 // Re-export so callers don't need to know about the helpers split.
 export {
   ExchangeError,
-  extractExpClaim,
   serviceUserId,
   type ExchangeFailureReason,
 };
@@ -205,28 +204,24 @@ export async function exchangeServiceAccountToken(
     );
   }
 
-  // 7. Mint. Better Auth's signJWT defaults `iss` and `aud` to BASE_URL
-  //    (https://auth.romaine.life) and `exp` to 15 minutes — matches the
-  //    human-token shape, so the same JWKS-backed verifier in tank-operator
-  //    accepts both. The `apps` claim is empty for service principals;
-  //    per-app prefs are a human concept.
+  // 7. Mint. The shared helper stamps every claim the verifier
+  //    contract requires (exp, iat, role, and — for service tokens —
+  //    actor_email). `iss` and `aud` are filled by Better Auth's
+  //    signJWT from baseURL. The `apps` claim is empty for service
+  //    principals; per-app prefs are a human concept.
   let signed;
   try {
-    signed = await auth.api.signJWT({
-      body: {
-        payload: {
-          sub: userId,
-          email,
-          name,
-          role: ROLE,
-          apps: {},
-          actor_email: lineage.ownerEmail,
-        },
-      },
+    signed = await mintAuthJwt({
+      sub: userId,
+      email,
+      name,
+      role: ROLE,
+      apps: {},
+      actorEmail: lineage.ownerEmail,
     });
   } catch (e) {
     throw new ExchangeError(
-      `signJWT failed: ${(e as Error).message}`,
+      `mintAuthJwt failed: ${(e as Error).message}`,
       500,
       "error_jwt_mint",
     );
@@ -238,7 +233,7 @@ export async function exchangeServiceAccountToken(
     email,
     actorEmail: lineage.ownerEmail,
     sessionId: lineage.sessionId,
-    expiresAt: extractExpClaim(signed.token),
+    expiresAt: signed.exp,
   };
 }
 
