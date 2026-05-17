@@ -20,7 +20,7 @@ import {
   exchangeServiceAccountToken,
   ExchangeError,
 } from "./service-exchange.js";
-import { extractExpClaim } from "./service-exchange-helpers.js";
+import { mintAuthJwt } from "./mint-jwt.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
 import {
   recordAdminBotTokenMint,
@@ -1939,27 +1939,19 @@ app.post("/admin/bot-tokens", async (c) => {
     apps = {};
   }
 
-  const nowSeconds = Math.floor(Date.now() / 1e3);
-  const expSeconds = nowSeconds + BOT_TOKEN_TTL_SECONDS;
-
   let signed;
   try {
-    signed = await auth.api.signJWT({
-      body: {
-        payload: {
-          sub: u.id,
-          email: u.email,
-          name: u.name,
-          role: "admin",
-          apps,
-          purpose: "bot",
-          iat: nowSeconds,
-          exp: expSeconds,
-        },
-      },
+    signed = await mintAuthJwt({
+      sub: u.id,
+      email: u.email,
+      name: u.name,
+      role: "admin",
+      apps,
+      purpose: "bot",
+      ttlSeconds: BOT_TOKEN_TTL_SECONDS,
     });
   } catch (e) {
-    console.error("[/admin/bot-tokens] signJWT failed:", e);
+    console.error("[/admin/bot-tokens] mintAuthJwt failed:", e);
     return c.json({ error: "failed to mint token" }, 500);
   }
 
@@ -1969,12 +1961,12 @@ app.post("/admin/bot-tokens", async (c) => {
   // structured log to the token's `exp` without seeing the token itself.
   console.warn(
     "[/admin/bot-tokens] minted:",
-    JSON.stringify({ email: u.email, exp: expSeconds, purpose: "bot" }),
+    JSON.stringify({ email: u.email, exp: signed.exp, purpose: "bot" }),
   );
 
   return c.json({
     token: signed.token,
-    expires_at: extractExpClaim(signed.token),
+    expires_at: signed.exp,
     expires_in_hours: 24,
     purpose: "bot",
   });
