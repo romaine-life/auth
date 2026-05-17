@@ -77,3 +77,18 @@ test("buildServiceEmail: mints under the mcp-glimmung consumer (pod-stable ident
     "pod-mcp-glimmung@service.mcp-glimmung.romaine.life",
   );
 });
+
+test("RESERVED_SERVICE_EMAIL_DOMAINS contains the mcp-k8s / mcp-argocd / mcp-azure-personal consumers", () => {
+  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.mcp-k8s.romaine.life"));
+  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.mcp-argocd.romaine.life"));
+  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.mcp-azure-personal.romaine.life"));
+});
+
+test("buildServiceEmail: mints under each new pod-stable MCP consumer", () => {
+  for (const slug of ["mcp-k8s", "mcp-argocd", "mcp-azure-personal"]) {
+    assert.strictEqual(
+      buildServiceEmail(slug, slug),
+      `pod-${slug}@service.${slug}.romaine.life`,
+    );
+  }
+});

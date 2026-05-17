@@ -35,6 +35,9 @@
 export const RESERVED_SERVICE_EMAIL_DOMAINS: readonly string[] = [
   "service.tank.romaine.life",
   "service.mcp-glimmung.romaine.life",
+  "service.mcp-k8s.romaine.life",
+  "service.mcp-argocd.romaine.life",
+  "service.mcp-azure-personal.romaine.life",
 ];
 
 /** Build the synthetic email for a service principal owned by `consumer`,

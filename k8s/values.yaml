@@ -72,10 +72,10 @@ k8sOidc:
   # Allowed (namespace, serviceAccount) callers for the service path.
   # - Tank-operator session pods run as `claude-session` in the
   #   `tank-operator-sessions` namespace (per-session lineage).
-  # - mcp-glimmung runs as `mcp-glimmung` in the `mcp-glimmung`
+  # - mcp-* shared MCP servers each run as their own SA in their own
   #   namespace (pod-stable lineage — see NAMESPACE_TO_CONSUMER in
   #   src/service-exchange.ts).
-  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-glimmung/mcp-glimmung"
+  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-glimmung/mcp-glimmung,mcp-k8s/mcp-k8s,mcp-argocd/mcp-argocd,mcp-azure-personal/mcp-azure-personal"
   # Namespaces hosting service-principal consumer pods — the auth pod
   # gets a cross-namespace Role + RoleBinding for `pods get` in each so
   # /api/auth/exchange/k8s can read pod metadata at exchange time.
@@ -87,3 +87,6 @@ k8sOidc:
   serviceConsumerNamespaces:
     - tank-operator-sessions
     - mcp-glimmung
+    - mcp-k8s
+    - mcp-argocd
+    - mcp-azure-personal
