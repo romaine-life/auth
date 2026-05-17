@@ -3,7 +3,13 @@
 # templates/.
 image:
   repository: romainecr.azurecr.io/auth
-  tag: 5651694
+  # Quoted to force YAML string parsing. An all-numeric short SHA
+  # (e.g. 5651694) would otherwise be read as an int, round-tripped
+  # through Helm's float-backed value pipeline, and rendered as
+  # "5.651694e+06" — which is not a real ACR tag. The bump-and-push
+  # step in .github/workflows/build-and-deploy.yaml writes the
+  # quoted form for the same reason.
+  tag: "5651694"
 
 # Wildcard cert + XListenerSet covering auth.dev.romaine.life AND
 # *.auth.dev.romaine.life. Provisioned once by the prod chart so

@@ -53,7 +53,13 @@ jobs:
 
       - name: Bump image tag in k8s/values.yaml
         run: |
-          sed -i "s|^  tag: .*|  tag: ${{ env.TAG }}|" k8s/values.yaml
+          # Quote the tag so YAML parses it as a string. Unquoted,
+          # an all-numeric short SHA (e.g. 5651694) is read as an
+          # int, round-trips through Helm's float-backed value
+          # pipeline, and lands as "5.651694e+06" in the rendered
+          # Deployment — a tag ACR doesn't have. Mirrors the
+          # tank-operator/.github/workflows/build.yml shape.
+          sed -i -E "s|^(  tag: ).*$|\1\"${{ env.TAG }}\"|" k8s/values.yaml
 
       - name: Commit and push tag bump
         run: |
