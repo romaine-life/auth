@@ -23,7 +23,8 @@ investing, house-hunt, and fzt-frontend.
 - `PUT  /api/admin/origins/{project}` — replace a project's slot wildcards (k8s-SA-auth, idempotent)
 - `DELETE /api/admin/origins/{project}` — drop a project's slot wildcards (k8s-SA-auth)
 - `POST /api/auth/exchange/k8s` — exchange a session-pod's projected SA token for an auth.romaine.life `role=service` JWT
-- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
+- `POST /api/auth/entra-exchange` — exchange an Entra ID access token (e.g. from `az account get-access-token`) for an auth.romaine.life user JWT
+- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_entra_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
 
@@ -71,6 +72,60 @@ the human owner so downstream services can audit and scope per-owner.
 
 See [nelsong6/tank-operator#486](https://github.com/nelsong6/tank-operator/issues/486)
 for the cross-repo architecture and rollout plan.
+
+## Entra ID exchange (CLI / agent auth)
+
+`POST /api/auth/entra-exchange` is the programmatic counterpart to the cookie-
+based silent-exchange path. Hand it the Microsoft Entra ID access token sitting
+in your `az` session and it returns the same human-shaped JWT the browser flow
+would issue — same `iss`, same `aud`, same JWKS key, same `{sub, email, name,
+role, apps}` claim shape — so downstream apps (tank-operator, glimmung, etc.)
+accept either without code changes.
+
+```sh
+ENTRA_TOKEN=$(az account get-access-token --resource api://<app-id> --query accessToken -o tsv)
+curl -sS https://auth.romaine.life/api/auth/entra-exchange \
+  -H "Content-Type: application/json" \
+  -d "{\"access_token\": \"$ENTRA_TOKEN\"}"
+# → {"token": "<auth.romaine.life JWT>", "expires_at": <unix-seconds>, "sub": "...", "email": "..."}
+```
+
+Tightening rules — the surface is deliberately narrow:
+
+1. **Tenant + audience are pinned per-environment** via `ENTRA_EXCHANGE_TENANT_ID`
+   and `ENTRA_EXCHANGE_AUDIENCE` (`k8s/values.yaml: entraExchange.*`). A token
+   issued for any other Entra resource, or by any other tenant, is rejected at
+   the verifier (`invalid_audience` / `invalid_tenant`). Leaving either blank
+   disables the endpoint — the deployment template omits the env vars, the
+   verifier reads that as `config_missing` and returns 503.
+2. **No auto-provisioning.** The caller's email (`email` → `preferred_username`
+   → `upn`) must already match a row in the Better Auth `user` table — sign in
+   once via the browser at auth.romaine.life first, so the user record exists.
+   Silently provisioning users from any tenant the audience pins to would widen
+   the surface from "tenant-X members with role admin/user can act" to "anyone
+   in tenant X gets a pending account."
+3. **Role gate.** Only `role ∈ {admin, user}` is accepted (`role_pending` for
+   anything else — including the default `pending` for fresh sign-ups and
+   `service` for synthetic SA-exchange accounts).
+
+Failure modes are enumerated in `src/entra-exchange-helpers.ts` (`EntraExchangeFailureReason`)
+and exposed on the Prometheus counter `auth_entra_exchange_total{result}` —
+same closed-set shape as `auth_romaine_exchange_total`. Structured `console.warn`
+on every rejection carries the reason + verifier message; no caller email is
+logged on reject because the rejection means we couldn't trust the identity claim.
+
+One-time Entra-app registration (the audience the verifier pins to):
+
+```sh
+# In your tenant. Single-tenant; we don't accept multi-tenant tokens.
+az ad app create \
+  --display-name "auth-romaine-life-cli" \
+  --sign-in-audience AzureADMyOrg
+
+# Take the appId from the output, then expose an `api://<appId>` identifier
+# and an `access_as_user` scope. Once consented, callers request tokens with
+# `--resource api://<appId>`.
+```
 
 ## How apps consume this
 

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   authRomaineExchangeTotal,
   adminOriginsRequestsTotal,
+  authEntraExchangeTotal,
   recordAdminOrigins,
+  recordEntraExchange,
   recordExchange,
   registry,
 } from "./metrics.js";
@@ -73,4 +75,40 @@ test("registered counter names match what the dashboards and alerts expect", asy
   const text = await registry.metrics();
   assert.match(text, /^# HELP auth_romaine_exchange_total /m);
   assert.match(text, /^# HELP auth_admin_origins_requests_total /m);
+  assert.match(text, /^# HELP auth_entra_exchange_total /m);
+});
+
+test("authEntraExchangeTotal records by `result` label", async () => {
+  recordEntraExchange("success");
+  recordEntraExchange("invalid_audience");
+  recordEntraExchange("invalid_audience");
+  const text = await registry.metrics();
+  assert.match(text, /^# TYPE auth_entra_exchange_total counter$/m);
+  assert.match(text, /auth_entra_exchange_total\{result="success"\} \d+/);
+  assert.match(text, /auth_entra_exchange_total\{result="invalid_audience"\} \d+/);
+});
+
+test("recordEntraExchange accepts every documented EntraExchangeResultLabel", () => {
+  // Compile-time invariant: the union below must match
+  // EntraExchangeResultLabel in metrics.ts exactly. A new reason added
+  // there without updating this test is a CI failure.
+  for (const r of [
+    "success",
+    "missing_token",
+    "invalid_signature",
+    "invalid_issuer",
+    "invalid_audience",
+    "invalid_tenant",
+    "token_expired",
+    "missing_email_claim",
+    "unknown_user",
+    "role_pending",
+    "jwks_fetch_failed",
+    "config_missing",
+    "error_jwt_mint",
+    "error_internal",
+  ] as const) {
+    recordEntraExchange(r);
+  }
+  assert.ok(true);
 });

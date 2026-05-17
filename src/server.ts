@@ -20,8 +20,15 @@ import {
   exchangeServiceAccountToken,
   ExchangeError,
 } from "./service-exchange.js";
+import { exchangeEntraToken } from "./entra-exchange.js";
+import { EntraExchangeError } from "./entra-exchange-helpers.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
-import { recordAdminOrigins, recordExchange, registry } from "./metrics.js";
+import {
+  recordAdminOrigins,
+  recordEntraExchange,
+  recordExchange,
+  registry,
+} from "./metrics.js";
 
 // Cross-origin fetches from .romaine.life apps that hit /api/auth/* to
 // pick up a JWT (silent-exchange path) or check session need CORS
@@ -214,6 +221,80 @@ if (process.env.TEST_MODE !== "true") {
       }
       console.error("[/api/auth/exchange/k8s] unexpected:", e);
       recordExchange("error_internal");
+      return c.json({ error: "internal error", reason: "error_internal" }, 500);
+    }
+  });
+
+  // ── Entra ID exchange ───────────────────────────────────────────────────
+  // Programmatic alternative to the cookie-based silent-exchange path: a
+  // CLI caller POSTs the access token sitting in their `az` session and
+  // gets back the same human-shape JWT the cookie path issues. Same iss,
+  // aud, signing key, and claim shape, so downstream apps verify it via
+  // their existing JWKS validators with no code changes.
+  //
+  // AuthN is the Entra access token itself in the request body — no
+  // separate caller credential. The audience pin (ENTRA_EXCHANGE_AUDIENCE)
+  // and tenant pin (ENTRA_EXCHANGE_TENANT_ID) prevent cross-resource and
+  // cross-tenant replay; the role check on the looked-up Better Auth user
+  // is the access gate (same gate the cookie-path JWT carries).
+  //
+  // Body shape `{access_token: "..."}` — NOT the Authorization header —
+  // because some HTTP clients (curl with default no-tty config, certain
+  // proxies) strip or rewrite Authorization on POST. The token is also a
+  // body-shaped artifact for our purposes (it's user data the caller is
+  // claiming, not an authentication header for the auth.romaine.life
+  // service itself).
+  //
+  // Registered before Better Auth's /api/auth/* catch-all so this more
+  // specific route wins.
+  app.post("/api/auth/entra-exchange", async (c) => {
+    let body: { access_token?: unknown };
+    try {
+      body = (await c.req.json()) as { access_token?: unknown };
+    } catch {
+      recordEntraExchange("missing_token");
+      return c.json(
+        { error: "request body must be JSON", reason: "missing_token" },
+        400,
+      );
+    }
+    const accessToken =
+      typeof body?.access_token === "string" ? body.access_token : "";
+    if (!accessToken) {
+      recordEntraExchange("missing_token");
+      return c.json(
+        { error: "missing access_token in request body", reason: "missing_token" },
+        400,
+      );
+    }
+    try {
+      const result = await exchangeEntraToken(accessToken);
+      recordEntraExchange("success");
+      return c.json({
+        token: result.token,
+        expires_at: result.expiresAt,
+        sub: result.userId,
+        email: result.email,
+      });
+    } catch (e) {
+      if (e instanceof EntraExchangeError) {
+        recordEntraExchange(e.reason);
+        // Structured log on every reject: stable telemetry reason + the
+        // verifier's message. No caller email here — the rejection means
+        // we couldn't trust the caller's identity claim, so we don't
+        // record an email that might be misleading. Successful exchanges
+        // are visible via updatedAt in the admin console.
+        console.warn(
+          "[/api/auth/entra-exchange] rejected:",
+          JSON.stringify({ reason: e.reason, message: e.message }),
+        );
+        return c.json(
+          { error: e.message, reason: e.reason },
+          e.status as Parameters<typeof c.json>[1],
+        );
+      }
+      console.error("[/api/auth/entra-exchange] unexpected:", e);
+      recordEntraExchange("error_internal");
       return c.json({ error: "internal error", reason: "error_internal" }, 500);
     }
   });
