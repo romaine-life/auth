@@ -67,15 +67,8 @@ test("RESERVED_SERVICE_EMAIL_DOMAINS contains the tank consumer (regression-guar
   assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.tank.romaine.life"));
 });
 
-test("RESERVED_SERVICE_EMAIL_DOMAINS contains the mcp-glimmung consumer (regression-guard against accidental removal)", () => {
-  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.mcp-glimmung.romaine.life"));
-});
-
-test("buildServiceEmail: mints under the mcp-glimmung consumer (pod-stable identity)", () => {
-  assert.strictEqual(
-    buildServiceEmail("mcp-glimmung", "mcp-glimmung"),
-    "pod-mcp-glimmung@service.mcp-glimmung.romaine.life",
-  );
+test("RESERVED_SERVICE_EMAIL_DOMAINS does NOT contain mcp-glimmung (deleted — mcp-glimmung forwards inbound JWTs and no longer mints its own)", () => {
+  assert.ok(!RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.mcp-glimmung.romaine.life"));
 });
 
 test("RESERVED_SERVICE_EMAIL_DOMAINS contains the mcp-k8s / mcp-argocd / mcp-azure-personal consumers", () => {

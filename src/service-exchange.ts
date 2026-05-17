@@ -67,11 +67,6 @@ type ConsumerConfig =
  *  consumers). */
 const NAMESPACE_TO_CONSUMER: Record<string, ConsumerConfig> = {
   "tank-operator-sessions": { slug: "tank", mode: "per-session" },
-  "mcp-glimmung": {
-    slug: "mcp-glimmung",
-    mode: "pod-stable",
-    stableId: "mcp-glimmung",
-  },
   "mcp-k8s": {
     slug: "mcp-k8s",
     mode: "pod-stable",
