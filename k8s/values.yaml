@@ -81,22 +81,3 @@ k8sOidc:
   # a matching row to NAMESPACE_TO_CONSUMER in src/service-exchange.ts.
   serviceConsumerNamespaces:
     - tank-operator-sessions
-
-# Entra ID exchange (/api/auth/entra-exchange). Lets a CLI caller swap
-# the access token sitting in their `az` session for an auth.romaine.life
-# user JWT — same shape as the cookie path, no interactive sign-in. The
-# user must already exist in the Better Auth user table (sign in once
-# via the browser at auth.romaine.life first) and have role ∈ {admin,
-# user}; the exchange does not auto-provision users.
-#
-# `audience` must match the identifier URI of the Entra app registration
-# that the caller's `az account get-access-token --resource ...` targets.
-# `tenantId` pins which Entra tenant the inbound token must be issued by;
-# tokens from any other tenant are rejected at the verifier. Leaving both
-# blank disables the endpoint (the deployment template omits the env
-# vars; the verifier reads that as `config_missing` → 503).
-#
-# See src/entra-exchange.ts.
-entraExchange:
-  audience: ""
-  tenantId: ""

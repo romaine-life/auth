@@ -20,12 +20,11 @@ import {
   exchangeServiceAccountToken,
   ExchangeError,
 } from "./service-exchange.js";
-import { exchangeEntraToken } from "./entra-exchange.js";
-import { EntraExchangeError } from "./entra-exchange-helpers.js";
+import { extractExpClaim } from "./service-exchange-helpers.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
 import {
+  recordAdminBotTokenMint,
   recordAdminOrigins,
-  recordEntraExchange,
   recordExchange,
   registry,
 } from "./metrics.js";
@@ -225,79 +224,6 @@ if (process.env.TEST_MODE !== "true") {
     }
   });
 
-  // ── Entra ID exchange ───────────────────────────────────────────────────
-  // Programmatic alternative to the cookie-based silent-exchange path: a
-  // CLI caller POSTs the access token sitting in their `az` session and
-  // gets back the same human-shape JWT the cookie path issues. Same iss,
-  // aud, signing key, and claim shape, so downstream apps verify it via
-  // their existing JWKS validators with no code changes.
-  //
-  // AuthN is the Entra access token itself in the request body — no
-  // separate caller credential. The audience pin (ENTRA_EXCHANGE_AUDIENCE)
-  // and tenant pin (ENTRA_EXCHANGE_TENANT_ID) prevent cross-resource and
-  // cross-tenant replay; the role check on the looked-up Better Auth user
-  // is the access gate (same gate the cookie-path JWT carries).
-  //
-  // Body shape `{access_token: "..."}` — NOT the Authorization header —
-  // because some HTTP clients (curl with default no-tty config, certain
-  // proxies) strip or rewrite Authorization on POST. The token is also a
-  // body-shaped artifact for our purposes (it's user data the caller is
-  // claiming, not an authentication header for the auth.romaine.life
-  // service itself).
-  //
-  // Registered before Better Auth's /api/auth/* catch-all so this more
-  // specific route wins.
-  app.post("/api/auth/entra-exchange", async (c) => {
-    let body: { access_token?: unknown };
-    try {
-      body = (await c.req.json()) as { access_token?: unknown };
-    } catch {
-      recordEntraExchange("missing_token");
-      return c.json(
-        { error: "request body must be JSON", reason: "missing_token" },
-        400,
-      );
-    }
-    const accessToken =
-      typeof body?.access_token === "string" ? body.access_token : "";
-    if (!accessToken) {
-      recordEntraExchange("missing_token");
-      return c.json(
-        { error: "missing access_token in request body", reason: "missing_token" },
-        400,
-      );
-    }
-    try {
-      const result = await exchangeEntraToken(accessToken);
-      recordEntraExchange("success");
-      return c.json({
-        token: result.token,
-        expires_at: result.expiresAt,
-        sub: result.userId,
-        email: result.email,
-      });
-    } catch (e) {
-      if (e instanceof EntraExchangeError) {
-        recordEntraExchange(e.reason);
-        // Structured log on every reject: stable telemetry reason + the
-        // verifier's message. No caller email here — the rejection means
-        // we couldn't trust the caller's identity claim, so we don't
-        // record an email that might be misleading. Successful exchanges
-        // are visible via updatedAt in the admin console.
-        console.warn(
-          "[/api/auth/entra-exchange] rejected:",
-          JSON.stringify({ reason: e.reason, message: e.message }),
-        );
-        return c.json(
-          { error: e.message, reason: e.reason },
-          e.status as Parameters<typeof c.json>[1],
-        );
-      }
-      console.error("[/api/auth/entra-exchange] unexpected:", e);
-      recordEntraExchange("error_internal");
-      return c.json({ error: "internal error", reason: "error_internal" }, 500);
-    }
-  });
 }
 
 // TEST_MODE flips every handler into fixture-data mode. Used by helm-issue
@@ -1234,6 +1160,56 @@ code, kbd, samp {
   font-size: 12px;
   margin-bottom: 16px;
 }
+
+/* ── Bot-token card (admin only) ─────────────────────────────────── */
+.bot-token-lede {
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 12px;
+}
+.bot-token-lede code {
+  background: var(--gray-850);
+  color: var(--fg-secondary);
+  padding: 0.05rem 0.3rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+}
+.bot-token-result {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border-subtle);
+}
+.bot-token-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--vk-accent);
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+.bot-token-jwt {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg-primary);
+  background: var(--gray-950);
+  border: 1px solid var(--gray-800);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  word-break: break-all;
+  resize: vertical;
+}
+.bot-token-error {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in oklab, var(--status-error), transparent 50%);
+  background: var(--status-error-bg);
+  color: var(--status-error);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
 `);
 
 const SCRIPT = raw(`
@@ -1329,6 +1305,69 @@ const SCRIPT = raw(`
       });
     }
   }
+})();
+`);
+
+// Admin-page-only script. Injected by the /admin handler via a second
+// <script> tag after the global SCRIPT (which handles the dashboard
+// widgets). Kept separate so the global script doesn't have to query
+// for #mint-bot-token on every page.
+const ADMIN_BOT_TOKEN_SCRIPT = raw(`
+(() => {
+  const btn = document.getElementById("mint-bot-token");
+  if (!btn) return;
+  const result = document.getElementById("bot-token-result");
+  const meta = document.getElementById("bot-token-meta");
+  const jwt = document.getElementById("bot-token-jwt");
+  const copy = document.getElementById("bot-token-copy");
+  const clear = document.getElementById("bot-token-clear");
+  const err = document.getElementById("bot-token-error");
+
+  const fmtExp = (exp) => {
+    const d = new Date(exp * 1000);
+    const iso = d.toISOString().slice(0, 16).replace("T", " ") + " UTC";
+    const hours = Math.round((exp - Date.now() / 1000) / 360) / 10;
+    return iso + " · " + hours + "h from now";
+  };
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    err.style.display = "none";
+    err.textContent = "";
+    try {
+      const res = await fetch("/admin/bot-tokens", { method: "POST", credentials: "same-origin" });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || ("HTTP " + res.status));
+      }
+      meta.textContent = "expires " + fmtExp(body.expires_at) + " · role=admin · purpose=bot";
+      jwt.value = body.token;
+      result.style.display = "";
+    } catch (e) {
+      err.textContent = "mint failed: " + (e && e.message ? e.message : String(e));
+      err.style.display = "";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  copy && copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(jwt.value);
+      const orig = copy.textContent;
+      copy.textContent = "copied";
+      setTimeout(() => { copy.textContent = orig; }, 1400);
+    } catch (_) {
+      // Fallback: select the textarea so the user can manually copy.
+      jwt.select();
+    }
+  });
+
+  clear && clear.addEventListener("click", () => {
+    jwt.value = "";
+    meta.textContent = "";
+    result.style.display = "none";
+  });
 })();
 `);
 
@@ -1825,10 +1864,120 @@ app.get("/admin", async (c) => {
             </form>
           </div>
         </section>
+
+        <section class="section col-span-2">
+          <div class="section-head">
+            <span class="title"><span class="sigil">//</span>Bot token</span>
+            <span class="count">24h · role=admin · purpose=bot</span>
+          </div>
+          <div class="section-body">
+            <div class="admin-card" id="bot-token-card">
+              <p class="bot-token-lede">
+                Break-glass JWT for <code>Authorization: Bearer …</code> from
+                outside the browser — typically to salvage tank-operator state
+                when the chat UI is down. Pasteable into <code>curl</code>;
+                expires in 24h. To revoke before then,
+                <code>az keyvault key rotate auth-jwt-signing</code> rolls the
+                signing key and invalidates every outstanding
+                auth.romaine.life JWT.
+              </p>
+              <div class="admin-actions">
+                <button class="admin-btn" id="mint-bot-token">Mint bot token</button>
+              </div>
+              <div class="bot-token-result" id="bot-token-result" style="display:none">
+                <div class="bot-token-meta" id="bot-token-meta"></div>
+                <textarea class="bot-token-jwt" id="bot-token-jwt" readonly rows="6"></textarea>
+                <div class="admin-actions">
+                  <button class="admin-btn" id="bot-token-copy" type="button">Copy</button>
+                  <button class="admin-btn" id="bot-token-clear" type="button">Clear</button>
+                </div>
+              </div>
+              <div class="bot-token-error" id="bot-token-error" style="display:none"></div>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
     ${footer()}
+    <script>${ADMIN_BOT_TOKEN_SCRIPT}</script>
   `));
+});
+
+// Bot-token mint. Admin-only, 24h TTL, stamped with purpose="bot" so
+// downstream audit logs can distinguish bot mints from browser sign-ins.
+// Same signing key as the cookie/exchange paths — any verifier that
+// already accepts an auth.romaine.life JWT accepts this one with no
+// change. Revocation before natural expiry is `az keyvault key rotate
+// auth-jwt-signing` (rolls the signing key, invalidates every outstanding
+// JWT including the cookie tokens; acceptable cost for the rare-event
+// bot-token surface).
+const BOT_TOKEN_TTL_SECONDS = 24 * 60 * 60;
+
+app.post("/admin/bot-tokens", async (c) => {
+  const gate = await requireAdmin(c);
+  if ("status" in gate) {
+    return c.json({ error: "admin only" }, gate.status === 302 ? 401 : 403);
+  }
+  if (TEST_MODE) {
+    // Test slots have no JWKS / signing key — return a placeholder so the
+    // UI button still demonstrates the flow without standing up Better Auth.
+    return c.json({
+      token: "test-mode-bot-token-placeholder",
+      expires_at: Math.floor(Date.now() / 1e3) + BOT_TOKEN_TTL_SECONDS,
+      expires_in_hours: 24,
+      purpose: "bot",
+    });
+  }
+
+  const u = gate.user as typeof gate.user & { role?: string; apps?: string };
+  let apps: Record<string, unknown> = {};
+  try {
+    apps = JSON.parse(u.apps ?? "{}");
+  } catch {
+    // Bad JSON in the apps column shouldn't block a bot-token mint —
+    // mirror the cookie-path definePayload behavior of silently empty.
+    apps = {};
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1e3);
+  const expSeconds = nowSeconds + BOT_TOKEN_TTL_SECONDS;
+
+  let signed;
+  try {
+    signed = await auth.api.signJWT({
+      body: {
+        payload: {
+          sub: u.id,
+          email: u.email,
+          name: u.name,
+          role: "admin",
+          apps,
+          purpose: "bot",
+          iat: nowSeconds,
+          exp: expSeconds,
+        },
+      },
+    });
+  } catch (e) {
+    console.error("[/admin/bot-tokens] signJWT failed:", e);
+    return c.json({ error: "failed to mint token" }, 500);
+  }
+
+  recordAdminBotTokenMint();
+  // Structured per-mint audit line. Carries the admin's email and the
+  // exp claim so a leaked-token investigation can correlate the
+  // structured log to the token's `exp` without seeing the token itself.
+  console.warn(
+    "[/admin/bot-tokens] minted:",
+    JSON.stringify({ email: u.email, exp: expSeconds, purpose: "bot" }),
+  );
+
+  return c.json({
+    token: signed.token,
+    expires_at: extractExpClaim(signed.token),
+    expires_in_hours: 24,
+    purpose: "bot",
+  });
 });
 
 app.post("/admin/users", async (c) => {
