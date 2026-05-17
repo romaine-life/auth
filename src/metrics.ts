@@ -67,34 +67,19 @@ export function recordAdminOrigins(method: string, result: AdminOriginsResultLab
   adminOriginsRequestsTotal.labels(method, result).inc();
 }
 
-// Entra-ID exchange (/api/auth/entra-exchange). Parallel to the SA-exchange
-// counter above; outcomes mirror the EntraExchangeFailureReason union in
-// src/entra-exchange-helpers.ts (plus `success`). Any new reason added
-// there must also be added to EntraExchangeResultLabel below and to the
-// Grafana panel that reads this counter.
-export const authEntraExchangeTotal = new Counter({
-  name: "auth_entra_exchange_total",
-  help: "Calls to /api/auth/entra-exchange, labeled by outcome.",
-  labelNames: ["result"] as const,
+// Admin bot-token mint (/admin/bot-tokens). Break-glass surface: an
+// admin clicks "Mint bot token" on the /admin console to get a 24h
+// JWT they can paste into an Authorization: Bearer call (e.g. for
+// salvaging a tank-operator session when the UI is broken). Single
+// counter (label-free) — this is rare-event telemetry, and a per-mint
+// `console.warn` carries the caller email for audit. A spike here
+// outside expected admin debugging windows is itself the signal.
+export const authAdminBotTokensMintedTotal = new Counter({
+  name: "auth_admin_bot_tokens_minted_total",
+  help: "Bot tokens minted via /admin/bot-tokens (24h, role=admin, purpose=bot).",
   registers: [registry],
 });
 
-export type EntraExchangeResultLabel =
-  | "success"
-  | "missing_token"
-  | "invalid_signature"
-  | "invalid_issuer"
-  | "invalid_audience"
-  | "invalid_tenant"
-  | "token_expired"
-  | "missing_email_claim"
-  | "unknown_user"
-  | "role_pending"
-  | "jwks_fetch_failed"
-  | "config_missing"
-  | "error_jwt_mint"
-  | "error_internal";
-
-export function recordEntraExchange(result: EntraExchangeResultLabel): void {
-  authEntraExchangeTotal.labels(result).inc();
+export function recordAdminBotTokenMint(): void {
+  authAdminBotTokensMintedTotal.inc();
 }
