@@ -72,6 +72,21 @@ const NAMESPACE_TO_CONSUMER: Record<string, ConsumerConfig> = {
     mode: "pod-stable",
     stableId: "mcp-glimmung",
   },
+  "mcp-k8s": {
+    slug: "mcp-k8s",
+    mode: "pod-stable",
+    stableId: "mcp-k8s",
+  },
+  "mcp-argocd": {
+    slug: "mcp-argocd",
+    mode: "pod-stable",
+    stableId: "mcp-argocd",
+  },
+  "mcp-azure-personal": {
+    slug: "mcp-azure-personal",
+    mode: "pod-stable",
+    stableId: "mcp-azure-personal",
+  },
 };
 
 const ROLE = "service" as const;
