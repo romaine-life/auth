@@ -66,3 +66,14 @@ test("buildServiceName: includes the consumer and stableId for admin-UI clarity"
 test("RESERVED_SERVICE_EMAIL_DOMAINS contains the tank consumer (regression-guard against accidental removal)", () => {
   assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.tank.romaine.life"));
 });
+
+test("RESERVED_SERVICE_EMAIL_DOMAINS contains the mcp-glimmung consumer (regression-guard against accidental removal)", () => {
+  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.mcp-glimmung.romaine.life"));
+});
+
+test("buildServiceEmail: mints under the mcp-glimmung consumer (pod-stable identity)", () => {
+  assert.strictEqual(
+    buildServiceEmail("mcp-glimmung", "mcp-glimmung"),
+    "pod-mcp-glimmung@service.mcp-glimmung.romaine.life",
+  );
+});

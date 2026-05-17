@@ -70,14 +70,20 @@ k8sOidc:
   # nelsong6/tank-operator#486.
   serviceAudience: "https://auth.romaine.life"
   # Allowed (namespace, serviceAccount) callers for the service path.
-  # Tank-operator session pods run as `claude-session` in the
-  # `tank-operator-sessions` namespace.
-  serviceSaAllowlist: "tank-operator-sessions/claude-session"
+  # - Tank-operator session pods run as `claude-session` in the
+  #   `tank-operator-sessions` namespace (per-session lineage).
+  # - mcp-glimmung runs as `mcp-glimmung` in the `mcp-glimmung`
+  #   namespace (pod-stable lineage — see NAMESPACE_TO_CONSUMER in
+  #   src/service-exchange.ts).
+  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-glimmung/mcp-glimmung"
   # Namespaces hosting service-principal consumer pods — the auth pod
   # gets a cross-namespace Role + RoleBinding for `pods get` in each so
-  # /api/auth/exchange/k8s can read lineage annotations
-  # (tank-operator/owner-email, tank-operator/session-id) at exchange
-  # time. Add a namespace here when onboarding a new consumer, and add
-  # a matching row to NAMESPACE_TO_CONSUMER in src/service-exchange.ts.
+  # /api/auth/exchange/k8s can read pod metadata at exchange time.
+  # Per-session consumers also need lineage annotations
+  # (tank-operator/owner-email, tank-operator/session-id) on their
+  # pods; pod-stable consumers (shared MCP servers) do not. Add a
+  # namespace here when onboarding a new consumer, and add a matching
+  # row to NAMESPACE_TO_CONSUMER in src/service-exchange.ts.
   serviceConsumerNamespaces:
     - tank-operator-sessions
+    - mcp-glimmung
