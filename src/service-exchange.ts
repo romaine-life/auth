@@ -35,13 +35,43 @@ export {
   type ExchangeFailureReason,
 };
 
-/** Map from k8s namespace to consumer slug. Each consumer slug must have a
- *  matching subdomain registered in RESERVED_SERVICE_EMAIL_DOMAINS in
- *  src/synthetic-email.ts. Add a row here when onboarding a new consumer
- *  AND extend RESERVED_SERVICE_EMAIL_DOMAINS — both are required, by
- *  construction (buildServiceEmail refuses unregistered consumers). */
-const NAMESPACE_TO_CONSUMER: Record<string, string> = {
-  "tank-operator-sessions": "tank",
+/** Per-consumer lineage policy.
+ *
+ *  - `per-session` (default for per-user pods like tank-operator's
+ *    session pods): the pod carries `tank-operator/owner-email` +
+ *    `tank-operator/session-id` annotations. readPodLineage reads them
+ *    at exchange time; actor_email = owner-email; sessionId = session-id.
+ *    Each exchange produces a JWT whose synthetic identity is specific
+ *    to the human-and-session pair.
+ *
+ *  - `pod-stable` (shared MCP servers like mcp-glimmung): there is no
+ *    per-pod human actor — the deployment is a platform-wide
+ *    infrastructure component that serves many users. The exchange
+ *    skips annotation reads and uses a fixed `stableId` configured
+ *    here. actor_email collapses to the synthetic email (the service
+ *    IS the actor), so glimmung's audit log says "this call came from
+ *    mcp-glimmung" rather than naming a specific user. Per-request
+ *    user attribution is a future enhancement that would forward the
+ *    caller's identity through the MCP layer (kept out of scope per
+ *    the design note on the glimmung-side cutover PR).
+ */
+type ConsumerConfig =
+  | { slug: string; mode: "per-session" }
+  | { slug: string; mode: "pod-stable"; stableId: string };
+
+/** Map from k8s namespace to consumer config. Each consumer slug must
+ *  have a matching subdomain registered in RESERVED_SERVICE_EMAIL_DOMAINS
+ *  in src/synthetic-email.ts. Add a row here when onboarding a new
+ *  consumer AND extend RESERVED_SERVICE_EMAIL_DOMAINS — both are
+ *  required, by construction (buildServiceEmail refuses unregistered
+ *  consumers). */
+const NAMESPACE_TO_CONSUMER: Record<string, ConsumerConfig> = {
+  "tank-operator-sessions": { slug: "tank", mode: "per-session" },
+  "mcp-glimmung": {
+    slug: "mcp-glimmung",
+    mode: "pod-stable",
+    stableId: "mcp-glimmung",
+  },
 };
 
 const ROLE = "service" as const;
@@ -125,22 +155,30 @@ export async function exchangeServiceAccountToken(
     );
   }
 
-  // 4. Fetch pod annotations (lineage).
+  // 4. Resolve lineage according to consumer mode. Per-session
+  //    consumers fetch pod annotations; pod-stable consumers use the
+  //    configured stableId and skip the API call entirely (the pod is
+  //    a shared service, not a per-user proxy).
   let lineage: PodLineage;
-  try {
-    lineage = await readPodLineage(verified.namespace, verified.pod.name);
-  } catch (e) {
-    const msg = (e as Error).message;
-    if (msg.includes("missing annotation")) {
-      throw new ExchangeError(msg, 400, "denied_annotation_missing");
+  if (consumer.mode === "pod-stable") {
+    const synthetic = buildServiceEmail(consumer.slug, consumer.stableId);
+    lineage = { sessionId: consumer.stableId, ownerEmail: synthetic };
+  } else {
+    try {
+      lineage = await readPodLineage(verified.namespace, verified.pod.name);
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg.includes("missing annotation")) {
+        throw new ExchangeError(msg, 400, "denied_annotation_missing");
+      }
+      throw new ExchangeError(`pod lookup failed: ${msg}`, 502, "denied_pod_lookup_failed");
     }
-    throw new ExchangeError(`pod lookup failed: ${msg}`, 502, "denied_pod_lookup_failed");
   }
 
   // 5. Build synthetic identity.
-  const email = buildServiceEmail(consumer, lineage.sessionId);
-  const name = buildServiceName(consumer, lineage.sessionId);
-  const userId = serviceUserId(consumer, lineage.sessionId);
+  const email = buildServiceEmail(consumer.slug, lineage.sessionId);
+  const name = buildServiceName(consumer.slug, lineage.sessionId);
+  const userId = serviceUserId(consumer.slug, lineage.sessionId);
 
   // 6. Idempotent upsert. Sessions reconnect frequently; each exchange
   //    refreshes updatedAt (visible in the admin console) but does not
