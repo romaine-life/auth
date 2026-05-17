@@ -86,6 +86,18 @@ spec:
               value: {{ .Values.k8sOidc.serviceAudience | quote }}
             - name: K8S_SERVICE_SA_ALLOWLIST
               value: {{ .Values.k8sOidc.serviceSaAllowlist | quote }}
+            # Entra ID exchange (/api/auth/entra-exchange). Programmatic
+            # alternative to the cookie-based silent-exchange path: a CLI
+            # caller POSTs the access token sitting in their `az` session
+            # and gets back the same human-shape JWT. Tenant + audience are
+            # pinned per-environment so a token issued for any other Entra
+            # resource cannot be replayed here.
+            {{- if .Values.entraExchange.audience }}
+            - name: ENTRA_EXCHANGE_AUDIENCE
+              value: {{ .Values.entraExchange.audience | quote }}
+            - name: ENTRA_EXCHANGE_TENANT_ID
+              value: {{ .Values.entraExchange.tenantId | quote }}
+            {{- end }}
             # Trust the in-cluster CA so native fetch's TLS validates the
             # apiserver cert when src/k8s-pod.ts calls
             # https://kubernetes.default.svc. Avoids pulling in undici

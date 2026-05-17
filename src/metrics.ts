@@ -66,3 +66,35 @@ export type AdminOriginsResultLabel =
 export function recordAdminOrigins(method: string, result: AdminOriginsResultLabel): void {
   adminOriginsRequestsTotal.labels(method, result).inc();
 }
+
+// Entra-ID exchange (/api/auth/entra-exchange). Parallel to the SA-exchange
+// counter above; outcomes mirror the EntraExchangeFailureReason union in
+// src/entra-exchange-helpers.ts (plus `success`). Any new reason added
+// there must also be added to EntraExchangeResultLabel below and to the
+// Grafana panel that reads this counter.
+export const authEntraExchangeTotal = new Counter({
+  name: "auth_entra_exchange_total",
+  help: "Calls to /api/auth/entra-exchange, labeled by outcome.",
+  labelNames: ["result"] as const,
+  registers: [registry],
+});
+
+export type EntraExchangeResultLabel =
+  | "success"
+  | "missing_token"
+  | "invalid_signature"
+  | "invalid_issuer"
+  | "invalid_audience"
+  | "invalid_tenant"
+  | "token_expired"
+  | "missing_email_claim"
+  | "unknown_user"
+  | "role_pending"
+  | "jwks_fetch_failed"
+  | "config_missing"
+  | "error_jwt_mint"
+  | "error_internal";
+
+export function recordEntraExchange(result: EntraExchangeResultLabel): void {
+  authEntraExchangeTotal.labels(result).inc();
+}
