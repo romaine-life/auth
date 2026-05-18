@@ -37,6 +37,12 @@ export const RESERVED_SERVICE_EMAIL_DOMAINS: readonly string[] = [
   "service.mcp-k8s.romaine.life",
   "service.mcp-argocd.romaine.life",
   "service.mcp-azure-personal.romaine.life",
+  // Hermes (`nelsong6/hermes`) is a singleton StatefulSet — one pod
+  // serves many users; no per-pod human actor. Onboarded as a
+  // pod-stable consumer (same shape as the mcp-* shared servers above)
+  // so the exchange skips annotation reads and uses a fixed stableId.
+  // See nelsong6/tank-operator#540.
+  "service.hermes.romaine.life",
 ];
 
 /** Build the synthetic email for a service principal owned by `consumer`,
