@@ -77,6 +77,10 @@ test("RESERVED_SERVICE_EMAIL_DOMAINS contains the mcp-k8s / mcp-argocd / mcp-azu
   assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.mcp-azure-personal.romaine.life"));
 });
 
+test("RESERVED_SERVICE_EMAIL_DOMAINS contains the hermes consumer (nelsong6/tank-operator#540)", () => {
+  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.hermes.romaine.life"));
+});
+
 test("buildServiceEmail: mints under each new pod-stable MCP consumer", () => {
   for (const slug of ["mcp-k8s", "mcp-argocd", "mcp-azure-personal"]) {
     assert.strictEqual(
@@ -84,4 +88,11 @@ test("buildServiceEmail: mints under each new pod-stable MCP consumer", () => {
       `pod-${slug}@service.${slug}.romaine.life`,
     );
   }
+});
+
+test("buildServiceEmail: mints under the hermes consumer (pod-stable singleton)", () => {
+  assert.strictEqual(
+    buildServiceEmail("hermes", "hermes"),
+    "pod-hermes@service.hermes.romaine.life",
+  );
 });

@@ -81,7 +81,10 @@ k8sOidc:
   # - mcp-* shared MCP servers each run as their own SA in their own
   #   namespace (pod-stable lineage — see NAMESPACE_TO_CONSUMER in
   #   src/service-exchange.ts).
-  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-k8s/mcp-k8s,mcp-argocd/mcp-argocd,mcp-azure-personal/mcp-azure-personal"
+  # - Hermes (`nelsong6/hermes`) is a singleton AI-agent StatefulSet
+  #   that calls tank-operator's MCP servers from its own pod
+  #   (pod-stable lineage — see nelsong6/tank-operator#540).
+  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-k8s/mcp-k8s,mcp-argocd/mcp-argocd,mcp-azure-personal/mcp-azure-personal,hermes/hermes"
   # Namespaces hosting service-principal consumer pods — the auth pod
   # gets a cross-namespace Role + RoleBinding for `pods get` in each so
   # /api/auth/exchange/k8s can read pod metadata at exchange time.
@@ -95,3 +98,4 @@ k8sOidc:
     - mcp-k8s
     - mcp-argocd
     - mcp-azure-personal
+    - hermes

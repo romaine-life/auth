@@ -81,6 +81,18 @@ const NAMESPACE_TO_CONSUMER: Record<string, ConsumerConfig> = {
     mode: "pod-stable",
     stableId: "mcp-azure-personal",
   },
+  // Hermes (`nelsong6/hermes`) — singleton AI-agent StatefulSet
+  // calling tank-operator's MCP servers (mcp-github, mcp-tank-operator,
+  // mcp-glimmung) from its own pod. No per-pod human actor: one
+  // Hermes pod serves every user with hermes-access. Per-request user
+  // attribution through the MCP layer is the same out-of-scope
+  // enhancement called out on the other pod-stable consumers above.
+  // See nelsong6/tank-operator#540.
+  hermes: {
+    slug: "hermes",
+    mode: "pod-stable",
+    stableId: "hermes",
+  },
 };
 
 const ROLE = "service" as const;
