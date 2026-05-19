@@ -2343,12 +2343,12 @@ function oauthError(c: Context, error: string, status = 400, extra: Record<strin
 
 function cliStatusMessage(grant: CliDeviceGrantRow | null): string {
   if (!grant) return "No pending request matches that code.";
-  if (cliGrantExpired(grant)) return "That request expired. Start a new request from Codex.";
+  if (cliGrantExpired(grant)) return "That request expired. Ask the requester to start a new bot-token request.";
   if (grant.status === "pending") return "Review the request below before approving.";
   if (grant.status === "approved") return "That request was already approved.";
   if (grant.status === "consumed") return "That request has already been exchanged for a bot token.";
   if (grant.status === "denied") return "That request was denied.";
-  return "That request expired. Start a new request from Codex.";
+  return "That request expired. Ask the requester to start a new bot-token request.";
 }
 
 function cliApprovedMessage(grant: CliDeviceGrantRow): string {
@@ -2432,8 +2432,8 @@ function cliApprovalPage(opts: {
 
         ${opts.callbackUrl ? html`
           <p class="vk-footnote">
-            Codex should finish through device polling. If it does not,
-            paste the fallback code into Codex or use the return link.
+            The requester should finish through device polling. If it does not,
+            paste the fallback code into the requesting app or use the return link.
           </p>
           <p class="vk-footnote"><a href="${opts.callbackUrl}">Return to application</a></p>
         ` : html``}
@@ -2504,7 +2504,7 @@ app.get("/cli", async (c) => {
     return c.html(cliApprovalPage({
       userCode: "",
       grant: null,
-      message: "Enter the code shown by Codex to approve a bot-token request.",
+      message: "Enter the code shown by the requester to approve a bot-token request.",
     }));
   }
 
@@ -2547,7 +2547,7 @@ app.post("/cli/approve", async (c) => {
     return c.html(cliApprovalPage({
       userCode,
       grant,
-      message: "That request expired. Start a new request from Codex.",
+      message: "That request expired. Ask the requester to start a new bot-token request.",
     }), 400);
   }
   if (grant.status !== "pending") {
