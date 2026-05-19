@@ -43,6 +43,16 @@ export const RESERVED_SERVICE_EMAIL_DOMAINS: readonly string[] = [
   // so the exchange skips annotation reads and uses a fixed stableId.
   // See nelsong6/tank-operator#540.
   "service.hermes.romaine.life",
+  // Tank-operator's orchestrator Deployment (the long-lived process
+  // in the `tank-operator` namespace, distinct from per-session pods
+  // in `tank-operator-sessions` which use `service.tank.romaine.life`).
+  // Onboarded as pod-stable so the orchestrator itself can mint a
+  // service-principal JWT for outbound calls — today: driving Hermes'
+  // OpenAI-compatible API server for hermes_gui session turns. Distinct
+  // subdomain from the `tank` slug so a leaked session JWT and a leaked
+  // orchestrator JWT can't be swapped at a verifier that pins on
+  // domain. See nelsong6/tank-operator#540 follow-up.
+  "service.tank-operator.romaine.life",
 ];
 
 /** Build the synthetic email for a service principal owned by `consumer`,

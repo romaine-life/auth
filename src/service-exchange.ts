@@ -93,6 +93,22 @@ const NAMESPACE_TO_CONSUMER: Record<string, ConsumerConfig> = {
     mode: "pod-stable",
     stableId: "hermes",
   },
+  // Tank-operator's orchestrator (the long-lived Deployment in the
+  // `tank-operator` namespace). Distinct from `tank-operator-sessions`
+  // above, which keys per-session lineage from pod annotations: this
+  // entry is the orchestrator itself, calling out to Hermes' API server
+  // for hermes_gui session turns (#540 follow-up). Two distinct slugs
+  // by design — a leaked session JWT (subdomain `service.tank...`) and
+  // a leaked orchestrator JWT (subdomain `service.tank-operator...`)
+  // are not interchangeable in any downstream verifier. stableId is
+  // fixed at `orchestrator` because there's only ever one logical
+  // orchestrator identity per deployment; pod restarts on the same
+  // Deployment continue to mint under the same synthetic user row.
+  "tank-operator": {
+    slug: "tank-operator",
+    mode: "pod-stable",
+    stableId: "orchestrator",
+  },
 };
 
 const ROLE = "service" as const;

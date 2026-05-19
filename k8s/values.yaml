@@ -84,7 +84,15 @@ k8sOidc:
   # - Hermes (`nelsong6/hermes`) is a singleton AI-agent StatefulSet
   #   that calls tank-operator's MCP servers from its own pod
   #   (pod-stable lineage — see nelsong6/tank-operator#540).
-  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-k8s/mcp-k8s,mcp-argocd/mcp-argocd,mcp-azure-personal/mcp-azure-personal,hermes/hermes"
+  # - Tank-operator's orchestrator (the long-lived Deployment in the
+  #   `tank-operator` namespace, distinct from the session pods in
+  #   `tank-operator-sessions`) calls Hermes' API server for hermes_gui
+  #   session turns (pod-stable lineage; see nelsong6/tank-operator#540
+  #   follow-up). Two distinct slugs (`tank` for sessions, `tank-operator`
+  #   for the orchestrator) so a leaked session JWT and a leaked
+  #   orchestrator JWT live in different reserved synthetic-email
+  #   subdomains and can't be swapped for each other downstream.
+  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-k8s/mcp-k8s,mcp-argocd/mcp-argocd,mcp-azure-personal/mcp-azure-personal,hermes/hermes,tank-operator/tank-operator"
   # Namespaces hosting service-principal consumer pods — the auth pod
   # gets a cross-namespace Role + RoleBinding for `pods get` in each so
   # /api/auth/exchange/k8s can read pod metadata at exchange time.
@@ -99,3 +107,4 @@ k8sOidc:
     - mcp-argocd
     - mcp-azure-personal
     - hermes
+    - tank-operator

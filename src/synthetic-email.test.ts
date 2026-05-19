@@ -81,6 +81,19 @@ test("RESERVED_SERVICE_EMAIL_DOMAINS contains the hermes consumer (nelsong6/tank
   assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.hermes.romaine.life"));
 });
 
+test("RESERVED_SERVICE_EMAIL_DOMAINS contains the tank-operator orchestrator consumer (nelsong6/tank-operator#540 follow-up)", () => {
+  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.tank-operator.romaine.life"));
+});
+
+test("RESERVED_SERVICE_EMAIL_DOMAINS keeps `tank` and `tank-operator` as distinct subdomains (leaked session JWT cannot be swapped for an orchestrator JWT)", () => {
+  // Both must be present, and they must be distinct strings. Future
+  // refactor that collapses them into one slug should delete this test
+  // explicitly and document the rationale.
+  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.tank.romaine.life"));
+  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.tank-operator.romaine.life"));
+  assert.notStrictEqual("service.tank.romaine.life", "service.tank-operator.romaine.life");
+});
+
 test("buildServiceEmail: mints under each new pod-stable MCP consumer", () => {
   for (const slug of ["mcp-k8s", "mcp-argocd", "mcp-azure-personal"]) {
     assert.strictEqual(
@@ -94,5 +107,12 @@ test("buildServiceEmail: mints under the hermes consumer (pod-stable singleton)"
   assert.strictEqual(
     buildServiceEmail("hermes", "hermes"),
     "pod-hermes@service.hermes.romaine.life",
+  );
+});
+
+test("buildServiceEmail: mints under the tank-operator orchestrator consumer", () => {
+  assert.strictEqual(
+    buildServiceEmail("tank-operator", "orchestrator"),
+    "pod-orchestrator@service.tank-operator.romaine.life",
   );
 });
