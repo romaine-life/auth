@@ -4,7 +4,6 @@ export const CLI_DEVICE_EXPIRES_SECONDS = 10 * 60;
 export const CLI_DEVICE_POLL_INTERVAL_SECONDS = 5;
 
 const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const DEFAULT_CLIENT_NAME = "Codex CLI";
 
 export type CliDeviceStatus =
   | "pending"
@@ -33,11 +32,15 @@ export function hashSecret(value: string): string {
   return crypto.createHash("sha256").update(value, "utf8").digest("base64url");
 }
 
-export function sanitizeClientName(value: unknown): string {
-  if (typeof value !== "string") return DEFAULT_CLIENT_NAME;
+export function requireSelfIdentification(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("self_identification is required");
+  }
   const trimmed = value.replace(/\s+/g, " ").trim();
-  if (!trimmed) return DEFAULT_CLIENT_NAME;
-  return trimmed.slice(0, 80);
+  if (!trimmed) {
+    throw new Error("self_identification is required");
+  }
+  return trimmed.slice(0, 500);
 }
 
 export function validateLoopbackRedirectUri(value: unknown): string | null {

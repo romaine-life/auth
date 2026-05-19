@@ -4,7 +4,7 @@ import {
   appendCallbackParams,
   hashSecret,
   normalizeUserCode,
-  sanitizeClientName,
+  requireSelfIdentification,
   validateLoopbackRedirectUri,
   validatePkceInput,
   verifyPkceS256,
@@ -14,10 +14,17 @@ test("normalizeUserCode: accepts pasted codes with spaces and hyphens", () => {
   assert.strictEqual(normalizeUserCode(" vk-ab12 cd34 "), "VKAB12CD34");
 });
 
-test("sanitizeClientName: trims noisy input and falls back when empty", () => {
-  assert.strictEqual(sanitizeClientName("  Codex   desktop  "), "Codex desktop");
-  assert.strictEqual(sanitizeClientName(" "), "Codex CLI");
-  assert.strictEqual(sanitizeClientName(null), "Codex CLI");
+test("requireSelfIdentification: trims noisy input and requires a non-empty string", () => {
+  assert.strictEqual(
+    requireSelfIdentification("  Codex   in auth repo, asked by Nelson  "),
+    "Codex in auth repo, asked by Nelson",
+  );
+  assert.throws(() => requireSelfIdentification(" "), /self_identification is required/);
+  assert.throws(() => requireSelfIdentification(null), /self_identification is required/);
+});
+
+test("requireSelfIdentification: bounds stored display text", () => {
+  assert.strictEqual(requireSelfIdentification("x".repeat(600)).length, 500);
 });
 
 test("validateLoopbackRedirectUri: accepts localhost loopback callbacks", () => {

@@ -170,7 +170,7 @@ Start a request:
 curl -sS -X POST https://auth.romaine.life/api/cli/device \
   -H 'Content-Type: application/json' \
   -d '{
-    "client_name": "Codex desktop",
+    "self_identification": "Codex in Nelson's desktop auth repo session, asked to get a bot token for romaine API calls",
     "redirect_uri": "http://127.0.0.1:49152/callback",
     "state": "opaque-client-state",
     "code_challenge": "<base64url-sha256-code-verifier>",
@@ -190,6 +190,10 @@ Response:
   "interval": 5
 }
 ```
+
+`self_identification` is required and intentionally loose: callers should
+describe who is asking in human-readable form. The approval page shows this
+string before the admin approves.
 
 The client should try to open `verification_uri_complete`. If that fails, show
 `verification_uri` and `user_code` so the admin can enter the code manually.
