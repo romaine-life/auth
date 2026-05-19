@@ -193,9 +193,10 @@ Response:
 
 The client should try to open `verification_uri_complete`. If that fails, show
 `verification_uri` and `user_code` so the admin can enter the code manually.
-After approval, the page loads the loopback `redirect_uri` in a hidden iframe
-with `?code=...&state=...`; it also displays the same one-time code for paste
-fallback.
+After approval, the page displays a one-time code for paste fallback. If a
+loopback `redirect_uri` was supplied, the page also shows a visible
+user-clicked return link with `?code=...&state=...`. It does not automatically
+contact localhost from the browser.
 
 Poll with the device code:
 

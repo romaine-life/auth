@@ -2417,10 +2417,9 @@ function cliApprovalPage(opts: {
 
         ${opts.callbackUrl ? html`
           <p class="vk-footnote">
-            Trying to return to the local application. If it does not complete,
-            paste the fallback code into Codex.
+            Codex should finish through device polling. If it does not,
+            paste the fallback code into Codex or use the return link.
           </p>
-          <iframe src="${opts.callbackUrl}" style="display:none" title="CLI callback"></iframe>
           <p class="vk-footnote"><a href="${opts.callbackUrl}">Return to application</a></p>
         ` : html``}
       </div>
