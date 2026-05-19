@@ -16,7 +16,7 @@ import {
   hashSecret,
   normalizeUserCode,
   randomUrlToken,
-  sanitizeClientName,
+  requireSelfIdentification,
   validateLoopbackRedirectUri,
   validatePkceInput,
   verifyPkceS256,
@@ -2380,10 +2380,12 @@ function cliApprovalPage(opts: {
         ${grant ? html`
           <div class="admin-card">
             <div class="admin-head">
-              <span class="email">${grant.clientName}</span>
+              <span class="email">Requester</span>
               <span class="since">${grant.expiresAt.toISOString().slice(11, 16)} UTC</span>
             </div>
             <div class="admin-grid">
+              <label>Self ID</label>
+              <textarea readonly rows="3">${grant.clientName}</textarea>
               <label>User code</label>
               <input readonly value="${opts.userCode}" />
               <label>Status</label>
@@ -2440,6 +2442,7 @@ app.post("/api/cli/device", async (c) => {
 
   let redirectUri: string | null;
   let pkce: { codeChallenge: string | null; codeChallengeMethod: "S256" | null };
+  let selfIdentification: string;
   try {
     redirectUri = validateLoopbackRedirectUri(body.redirect_uri);
     pkce = validatePkceInput(
@@ -2447,6 +2450,7 @@ app.post("/api/cli/device", async (c) => {
       body.code_challenge,
       body.code_challenge_method,
     );
+    selfIdentification = requireSelfIdentification(body.self_identification);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
@@ -2460,7 +2464,7 @@ app.post("/api/cli/device", async (c) => {
     id: crypto.randomUUID(),
     deviceCodeHash: hashSecret(deviceCode),
     userCodeHash: hashSecret(normalizeUserCode(userCode)),
-    clientName: sanitizeClientName(body.client_name),
+    clientName: selfIdentification,
     redirectUri,
     state: typeof body.state === "string" ? body.state.slice(0, 500) : null,
     codeChallenge: pkce.codeChallenge,
