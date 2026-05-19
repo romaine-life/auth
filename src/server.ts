@@ -197,8 +197,31 @@ if (process.env.TEST_MODE !== "true") {
       return c.json({ error: "missing bearer token" }, 401);
     }
     const saToken = header.slice("Bearer ".length).trim();
+    // Optional JSON body with `actor_email` for the on-behalf-of
+    // mint path used by elevated consumers (today: tank-operator
+    // orchestrator's mcp-github proxy). Empty/missing/invalid-JSON
+    // body falls through to the default flow that derives
+    // actor_email from pod annotations. Non-elevated consumers that
+    // populate this field still hit the actor-override gate in the
+    // exchange and are rejected with denied_actor_override_not_allowed.
+    let requestedActorEmail = "";
+    if (c.req.header("Content-Length")) {
+      try {
+        const body = (await c.req.json()) as { actor_email?: unknown };
+        if (typeof body?.actor_email === "string") {
+          requestedActorEmail = body.actor_email;
+        }
+      } catch {
+        // Treat malformed body as "no actor_email supplied" rather
+        // than 400: tank-operator's bootstrap path sends an empty
+        // body for the standard exchange and an object body only for
+        // the on-behalf-of path. A parse error means "no override."
+      }
+    }
     try {
-      const result = await exchangeServiceAccountToken(saToken);
+      const result = await exchangeServiceAccountToken(saToken, {
+        requestedActorEmail,
+      });
       recordExchange("success");
       return c.json({
         token: result.token,

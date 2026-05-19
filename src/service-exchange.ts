@@ -23,6 +23,7 @@ import { mintAuthJwt } from "./mint-jwt.js";
 import { buildServiceEmail, buildServiceName } from "./synthetic-email.js";
 import {
   ExchangeError,
+  isPlausibleActorEmail,
   serviceUserId,
   type ExchangeFailureReason,
 } from "./service-exchange-helpers.js";
@@ -54,9 +55,29 @@ export {
  *    caller's identity through the MCP layer (kept out of scope per
  *    the design note on the glimmung-side cutover PR).
  */
+/** Optional `pod-stable` capability: when true, the consumer's caller
+ *  may supply a chosen `actor_email` on the exchange request. The
+ *  synthetic identity (sub/email/name) stays based on stableId — only
+ *  the `actor_email` claim changes — so audit logs still attribute
+ *  the call to the orchestrator-as-issuer, with the on-behalf-of
+ *  user named in `actor_email`.
+ *
+ *  Today this is set ONLY on the `tank-operator` orchestrator entry.
+ *  The orchestrator forwards a SPA user's email when it needs to make
+ *  a per-user MCP call (today: mcp-github → list a user's installation
+ *  repos for the session-creation picker). Other in-cluster services
+ *  (mcp-k8s, mcp-argocd, etc.) have no such use case and stay
+ *  un-elevated by default. */
 type ConsumerConfig =
   | { slug: string; mode: "per-session" }
-  | { slug: string; mode: "pod-stable"; stableId: string };
+  | {
+      slug: string;
+      mode: "pod-stable";
+      stableId: string;
+      /** When true, the route handler may forward a caller-supplied
+       *  actor_email to the mint. Defaults to false. */
+      allowActorOverride?: boolean;
+    };
 
 /** Map from k8s namespace to consumer config. Each consumer slug must
  *  have a matching subdomain registered in RESERVED_SERVICE_EMAIL_DOMAINS
@@ -108,6 +129,20 @@ const NAMESPACE_TO_CONSUMER: Record<string, ConsumerConfig> = {
     slug: "tank-operator",
     mode: "pod-stable",
     stableId: "orchestrator",
+    // Stage 2 of the per-session repo-selection feature
+    // (nelsong6/tank-operator stage 2): the orchestrator needs to call
+    // mcp-github to enumerate a SPA user's installation repos for the
+    // splash-page picker, but the orchestrator pod is not bound to any
+    // one user. By design we don't move GitHub App credentials back into
+    // the orchestrator (that would undo the mcp-github extraction). The
+    // alternative is to let mcp-github keep its existing actor_email →
+    // installation_id lookup, and let the orchestrator mint a service
+    // JWT with the SPA caller's email in actor_email. This flag opens
+    // that minting path for the orchestrator's namespace ONLY. mcp-github
+    // sees a normal service JWT — no custom side-channel — and routes
+    // it to the right installation. See nelsong6/tank-operator stage 2
+    // PR for the full chain.
+    allowActorOverride: true,
   },
 };
 
@@ -149,12 +184,33 @@ export interface ExchangeResult {
   expiresAt: number;
 }
 
+/** Optional inputs the route handler can forward to the exchange.
+ *  Today the only field is the on-behalf-of `requestedActorEmail` used
+ *  by the tank-operator orchestrator stage 2 flow. Kept as a struct so
+ *  future per-call knobs (forwarded by trusted callers) have a place
+ *  to land without growing the positional arity. */
+export interface ExchangeOptions {
+  /** Caller-supplied `actor_email` override. When present AND the
+   *  exchanging consumer carries `allowActorOverride: true`, the minted
+   *  JWT carries this string as `actor_email` instead of the consumer's
+   *  synthetic identity. The synthetic sub/email/name are unchanged —
+   *  audit logs still attribute the call to the orchestrator-as-issuer.
+   *
+   *  Requests from non-elevated consumers fail with
+   *  `denied_actor_override_not_allowed`; malformed inputs fail with
+   *  `denied_actor_email_invalid`. Both are the route-handler's
+   *  surface; downstream consumers (mcp-github, etc.) never see this
+   *  field directly. */
+  requestedActorEmail?: string;
+}
+
 /** Exchange a verified k8s ServiceAccount JWT for an auth.romaine.life
  *  service-principal JWT. Throws `ExchangeError` on any failure with a
  *  stable telemetry reason and an appropriate HTTP status for the route
  *  handler to surface. */
 export async function exchangeServiceAccountToken(
   saToken: string,
+  options: ExchangeOptions = {},
 ): Promise<ExchangeResult> {
   // 1. Verify the inbound SA JWT.
   let verified;
@@ -217,6 +273,35 @@ export async function exchangeServiceAccountToken(
   const name = buildServiceName(consumer.slug, lineage.sessionId);
   const userId = serviceUserId(consumer.slug, lineage.sessionId);
 
+  // 5a. On-behalf-of override. Elevated consumers (allowActorOverride)
+  // may supply a caller-chosen actor_email; the synthetic identity
+  // (sub/email/name) is unchanged so the audit trail still says
+  // "this token was minted for the orchestrator," with the human
+  // named in `actor_email`. Non-elevated consumers that try to set
+  // this field fail loudly: it's a privilege escalation attempt
+  // (intentional or otherwise) and silent ignore would be worse.
+  let actorEmail = lineage.ownerEmail;
+  const requestedActorEmail = (options.requestedActorEmail ?? "").trim();
+  if (requestedActorEmail !== "") {
+    const allowOverride =
+      consumer.mode === "pod-stable" && consumer.allowActorOverride === true;
+    if (!allowOverride) {
+      throw new ExchangeError(
+        `consumer ${consumer.slug} may not request actor_email override`,
+        403,
+        "denied_actor_override_not_allowed",
+      );
+    }
+    if (!isPlausibleActorEmail(requestedActorEmail)) {
+      throw new ExchangeError(
+        `actor_email ${JSON.stringify(requestedActorEmail)} failed format validation`,
+        400,
+        "denied_actor_email_invalid",
+      );
+    }
+    actorEmail = requestedActorEmail.toLowerCase();
+  }
+
   // 6. Idempotent upsert. Sessions reconnect frequently; each exchange
   //    refreshes updatedAt (visible in the admin console) but does not
   //    churn the row id. The row's email/name/role are re-set on every
@@ -245,7 +330,7 @@ export async function exchangeServiceAccountToken(
       name,
       role: ROLE,
       apps: {},
-      actorEmail: lineage.ownerEmail,
+      actorEmail,
     });
   } catch (e) {
     throw new ExchangeError(
@@ -259,7 +344,7 @@ export async function exchangeServiceAccountToken(
     token: signed.token,
     userId,
     email,
-    actorEmail: lineage.ownerEmail,
+    actorEmail,
     sessionId: lineage.sessionId,
     expiresAt: signed.exp,
   };

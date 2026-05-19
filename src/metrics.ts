@@ -40,6 +40,8 @@ export type ExchangeResultLabel =
   | "denied_unknown_namespace"
   | "denied_annotation_missing"
   | "denied_pod_lookup_failed"
+  | "denied_actor_override_not_allowed"
+  | "denied_actor_email_invalid"
   | "error_jwt_mint"
   | "error_internal";
 
