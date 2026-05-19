@@ -10,6 +10,7 @@ import { db } from "./db/client.js";
 import { account, cliDeviceGrant, session, user } from "./db/schema.js";
 import {
   appendCallbackParams,
+  buildRequesterGuidance,
   CLI_DEVICE_EXPIRES_SECONDS,
   CLI_DEVICE_POLL_INTERVAL_SECONDS,
   decodeRequesterInfo,
@@ -17,6 +18,7 @@ import {
   generateUserCode,
   hashSecret,
   normalizeUserCode,
+  previousMiscIdentifiersFromClientNames,
   randomUrlToken,
   requireRequesterInfo,
   validateLoopbackRedirectUri,
@@ -2337,6 +2339,15 @@ async function findCliGrantByExchangeCode(code: string): Promise<CliDeviceGrantR
   return rows[0] ?? null;
 }
 
+async function listPreviousCliMiscIdentifiers(): Promise<string[]> {
+  const rows = await db
+    .select({ clientName: cliDeviceGrant.clientName })
+    .from(cliDeviceGrant)
+    .orderBy(desc(cliDeviceGrant.createdAt))
+    .limit(250);
+  return previousMiscIdentifiersFromClientNames(rows.map((row) => row.clientName));
+}
+
 function oauthError(c: Context, error: string, status = 400, extra: Record<string, unknown> = {}) {
   return c.json({ error, ...extra }, status as Parameters<typeof c.json>[1]);
 }
@@ -2442,6 +2453,10 @@ function cliApprovalPage(opts: {
     ${footer()}
   `);
 }
+
+app.get("/api/cli/requester-guidance", async (c) => {
+  return c.json(buildRequesterGuidance(await listPreviousCliMiscIdentifiers()));
+});
 
 app.post("/api/cli/device", async (c) => {
   if (TEST_MODE) return c.json({ error: "cli device flow unavailable in test mode" }, 404);

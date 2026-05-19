@@ -164,6 +164,32 @@ creates a pending request, opens the browser approval page, and receives the
 same `role=admin`, `purpose=bot` JWT that `/admin/bot-tokens` mints after the
 signed-in admin approves.
 
+Fetch requester guidance before choosing approval-page fields:
+
+```sh
+curl -sS https://auth.romaine.life/api/cli/requester-guidance
+```
+
+Response:
+
+```json
+{
+  "instructions": "Choose requester fields before calling POST /api/cli/device...",
+  "fields": {
+    "where_happening": "Describe where this request is happening...",
+    "intended_use": "Describe what the bot token will be used for...",
+    "misc_identifier": "Choose one common concrete singular noun..."
+  },
+  "constraints": {
+    "where_happening_max_length": 500,
+    "intended_use_max_length": 500,
+    "misc_identifier_max_length": 80,
+    "previous_misc_identifiers_limit": 50
+  },
+  "previous_misc_identifiers": ["lantern", "teapot"]
+}
+```
+
 Start a request:
 
 ```sh
@@ -195,8 +221,9 @@ Response:
 
 `where_happening`, `intended_use`, and `misc_identifier` are required and
 intentionally loose. Agent callers should describe where the request is coming
-from, what the token is intended for, and provide a random noun-style misc
-identifier. The approval page shows all three fields before the admin approves.
+from, what the token is intended for, and provide a noun-style misc identifier
+that is not listed in `previous_misc_identifiers`. The approval page shows all
+three fields before the admin approves.
 
 The client should try to open `verification_uri_complete`. If that fails, show
 `verification_uri` and `user_code` so the admin can enter the code manually.

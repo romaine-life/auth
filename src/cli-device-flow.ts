@@ -2,6 +2,10 @@ import crypto from "node:crypto";
 
 export const CLI_DEVICE_EXPIRES_SECONDS = 10 * 60;
 export const CLI_DEVICE_POLL_INTERVAL_SECONDS = 5;
+export const CLI_WHERE_HAPPENING_MAX_LENGTH = 500;
+export const CLI_INTENDED_USE_MAX_LENGTH = 500;
+export const CLI_MISC_IDENTIFIER_MAX_LENGTH = 80;
+export const CLI_PREVIOUS_MISC_IDENTIFIERS_LIMIT = 50;
 
 const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -16,6 +20,22 @@ export interface CliRequesterInfo {
   whereHappening: string;
   intendedUse: string;
   miscIdentifier: string;
+}
+
+export interface CliRequesterGuidance {
+  instructions: string;
+  fields: {
+    where_happening: string;
+    intended_use: string;
+    misc_identifier: string;
+  };
+  constraints: {
+    where_happening_max_length: number;
+    intended_use_max_length: number;
+    misc_identifier_max_length: number;
+    previous_misc_identifiers_limit: number;
+  };
+  previous_misc_identifiers: string[];
 }
 
 export function randomUrlToken(bytes = 32): string {
@@ -55,9 +75,21 @@ function requireRequestField(
 
 export function requireRequesterInfo(body: Record<string, unknown>): CliRequesterInfo {
   return {
-    whereHappening: requireRequestField(body.where_happening, "where_happening", 500),
-    intendedUse: requireRequestField(body.intended_use, "intended_use", 500),
-    miscIdentifier: requireRequestField(body.misc_identifier, "misc_identifier", 80),
+    whereHappening: requireRequestField(
+      body.where_happening,
+      "where_happening",
+      CLI_WHERE_HAPPENING_MAX_LENGTH,
+    ),
+    intendedUse: requireRequestField(
+      body.intended_use,
+      "intended_use",
+      CLI_INTENDED_USE_MAX_LENGTH,
+    ),
+    miscIdentifier: requireRequestField(
+      body.misc_identifier,
+      "misc_identifier",
+      CLI_MISC_IDENTIFIER_MAX_LENGTH,
+    ),
   };
 }
 
@@ -85,6 +117,46 @@ export function decodeRequesterInfo(value: string): CliRequesterInfo {
       miscIdentifier: "legacy",
     };
   }
+}
+
+export function previousMiscIdentifiersFromClientNames(
+  clientNames: string[],
+  limit = CLI_PREVIOUS_MISC_IDENTIFIERS_LIMIT,
+): string[] {
+  const previous: string[] = [];
+  const seen = new Set<string>();
+  for (const clientName of clientNames) {
+    const requester = decodeRequesterInfo(clientName);
+    if (requester.intendedUse === "legacy request" && requester.miscIdentifier === "legacy") {
+      continue;
+    }
+    const miscIdentifier = requester.miscIdentifier.replace(/\s+/g, " ").trim();
+    if (!miscIdentifier) continue;
+    const key = miscIdentifier.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    previous.push(miscIdentifier.slice(0, CLI_MISC_IDENTIFIER_MAX_LENGTH));
+    if (previous.length >= limit) break;
+  }
+  return previous;
+}
+
+export function buildRequesterGuidance(previousMiscIdentifiers: string[]): CliRequesterGuidance {
+  return {
+    instructions: "Choose requester fields before calling POST /api/cli/device. The misc identifier is intentionally chosen by the requester; choose a fresh common concrete singular noun that is not listed in previous_misc_identifiers.",
+    fields: {
+      where_happening: "Describe where this request is happening, such as the current session, workspace, host, or tool context.",
+      intended_use: "Describe what the bot token will be used for in this immediate request.",
+      misc_identifier: "Choose one common concrete singular noun for human recognition. Avoid auth, software, repository, and computer words. Do not reuse any noun listed in previous_misc_identifiers.",
+    },
+    constraints: {
+      where_happening_max_length: CLI_WHERE_HAPPENING_MAX_LENGTH,
+      intended_use_max_length: CLI_INTENDED_USE_MAX_LENGTH,
+      misc_identifier_max_length: CLI_MISC_IDENTIFIER_MAX_LENGTH,
+      previous_misc_identifiers_limit: CLI_PREVIOUS_MISC_IDENTIFIERS_LIMIT,
+    },
+    previous_misc_identifiers: previousMiscIdentifiers.slice(0, CLI_PREVIOUS_MISC_IDENTIFIERS_LIMIT),
+  };
 }
 
 export function validateLoopbackRedirectUri(value: unknown): string | null {

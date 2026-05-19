@@ -2,10 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   appendCallbackParams,
+  buildRequesterGuidance,
   decodeRequesterInfo,
   encodeRequesterInfo,
   hashSecret,
   normalizeUserCode,
+  previousMiscIdentifiersFromClientNames,
   requireRequesterInfo,
   validateLoopbackRedirectUri,
   validatePkceInput,
@@ -74,6 +76,46 @@ test("decodeRequesterInfo: preserves legacy plain self-identification strings", 
     intendedUse: "legacy request",
     miscIdentifier: "legacy",
   });
+});
+
+test("previousMiscIdentifiersFromClientNames: returns recent unique structured misc identifiers", () => {
+  const encoded = (miscIdentifier: string) => encodeRequesterInfo({
+    whereHappening: "workspace",
+    intendedUse: "test auth flow",
+    miscIdentifier,
+  });
+  assert.deepStrictEqual(
+    previousMiscIdentifiersFromClientNames([
+      encoded("lantern"),
+      encoded("  teapot  "),
+      encoded("Lantern"),
+      "Codex legacy request",
+      encoded("marmalade"),
+    ]),
+    ["lantern", "teapot", "marmalade"],
+  );
+});
+
+test("previousMiscIdentifiersFromClientNames: caps guidance history at 50 nouns", () => {
+  const clientNames = Array.from({ length: 55 }, (_, i) => encodeRequesterInfo({
+    whereHappening: "workspace",
+    intendedUse: "test auth flow",
+    miscIdentifier: `noun-${i}`,
+  }));
+  const previous = previousMiscIdentifiersFromClientNames(clientNames);
+  assert.strictEqual(previous.length, 50);
+  assert.strictEqual(previous[0], "noun-0");
+  assert.strictEqual(previous[49], "noun-49");
+});
+
+test("buildRequesterGuidance: describes required fields and prior misc identifiers", () => {
+  const guidance = buildRequesterGuidance(["lantern", "teapot"]);
+  assert.match(guidance.instructions, /POST \/api\/cli\/device/);
+  assert.match(guidance.fields.where_happening, /where/i);
+  assert.match(guidance.fields.intended_use, /used for/i);
+  assert.match(guidance.fields.misc_identifier, /previous_misc_identifiers/);
+  assert.deepStrictEqual(guidance.previous_misc_identifiers, ["lantern", "teapot"]);
+  assert.strictEqual(guidance.constraints.previous_misc_identifiers_limit, 50);
 });
 
 test("validateLoopbackRedirectUri: accepts localhost loopback callbacks", () => {
