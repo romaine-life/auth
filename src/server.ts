@@ -2351,6 +2351,11 @@ function cliStatusMessage(grant: CliDeviceGrantRow | null): string {
   return "That request expired. Start a new request from Codex.";
 }
 
+function cliApprovedMessage(grant: CliDeviceGrantRow): string {
+  const requester = decodeRequesterInfo(grant.clientName);
+  return `Approved. The requester identified as "${requester.miscIdentifier}" can now exchange this request for a bot token.`;
+}
+
 function cliApprovalPage(opts: {
   userCode: string;
   grant: CliDeviceGrantRow | null;
@@ -2602,7 +2607,7 @@ app.post("/cli/approve", async (c) => {
   return c.html(cliApprovalPage({
     userCode,
     grant: approved,
-    message: "Approved. Codex can now exchange this request for a bot token.",
+    message: cliApprovedMessage(approved),
     callbackUrl,
     exchangeCode,
   }));
