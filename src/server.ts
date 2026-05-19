@@ -12,15 +12,18 @@ import {
   appendCallbackParams,
   CLI_DEVICE_EXPIRES_SECONDS,
   CLI_DEVICE_POLL_INTERVAL_SECONDS,
+  decodeRequesterInfo,
+  encodeRequesterInfo,
   generateUserCode,
   hashSecret,
   normalizeUserCode,
   randomUrlToken,
-  requireSelfIdentification,
+  requireRequesterInfo,
   validateLoopbackRedirectUri,
   validatePkceInput,
   verifyPkceS256,
   type CliDeviceStatus,
+  type CliRequesterInfo,
 } from "./cli-device-flow.js";
 import {
   deleteProjectOrigins,
@@ -2356,6 +2359,7 @@ function cliApprovalPage(opts: {
   exchangeCode?: string | null;
 }) {
   const grant = opts.grant;
+  const requester = grant ? decodeRequesterInfo(grant.clientName) : null;
   return SHELL("Approve CLI token - auth.romaine.life", html`
     ${topbar("online")}
     <main class="main">
@@ -2384,8 +2388,12 @@ function cliApprovalPage(opts: {
               <span class="since">${grant.expiresAt.toISOString().slice(11, 16)} UTC</span>
             </div>
             <div class="admin-grid">
-              <label>Self ID</label>
-              <textarea readonly rows="3">${grant.clientName}</textarea>
+              <label>Where</label>
+              <textarea readonly rows="5">${requester?.whereHappening ?? ""}</textarea>
+              <label>Intended use</label>
+              <textarea readonly rows="5">${requester?.intendedUse ?? ""}</textarea>
+              <label>Misc identifier</label>
+              <input readonly value="${requester?.miscIdentifier ?? ""}" />
               <label>User code</label>
               <input readonly value="${opts.userCode}" />
               <label>Status</label>
@@ -2442,7 +2450,7 @@ app.post("/api/cli/device", async (c) => {
 
   let redirectUri: string | null;
   let pkce: { codeChallenge: string | null; codeChallengeMethod: "S256" | null };
-  let selfIdentification: string;
+  let requesterInfo: CliRequesterInfo;
   try {
     redirectUri = validateLoopbackRedirectUri(body.redirect_uri);
     pkce = validatePkceInput(
@@ -2450,7 +2458,7 @@ app.post("/api/cli/device", async (c) => {
       body.code_challenge,
       body.code_challenge_method,
     );
-    selfIdentification = requireSelfIdentification(body.self_identification);
+    requesterInfo = requireRequesterInfo(body);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
@@ -2464,7 +2472,7 @@ app.post("/api/cli/device", async (c) => {
     id: crypto.randomUUID(),
     deviceCodeHash: hashSecret(deviceCode),
     userCodeHash: hashSecret(normalizeUserCode(userCode)),
-    clientName: selfIdentification,
+    clientName: encodeRequesterInfo(requesterInfo),
     redirectUri,
     state: typeof body.state === "string" ? body.state.slice(0, 500) : null,
     codeChallenge: pkce.codeChallenge,

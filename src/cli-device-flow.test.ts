@@ -2,9 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   appendCallbackParams,
+  decodeRequesterInfo,
+  encodeRequesterInfo,
   hashSecret,
   normalizeUserCode,
-  requireSelfIdentification,
+  requireRequesterInfo,
   validateLoopbackRedirectUri,
   validatePkceInput,
   verifyPkceS256,
@@ -14,17 +16,64 @@ test("normalizeUserCode: accepts pasted codes with spaces and hyphens", () => {
   assert.strictEqual(normalizeUserCode(" vk-ab12 cd34 "), "VKAB12CD34");
 });
 
-test("requireSelfIdentification: trims noisy input and requires a non-empty string", () => {
-  assert.strictEqual(
-    requireSelfIdentification("  Codex   in auth repo, asked by Nelson  "),
-    "Codex in auth repo, asked by Nelson",
+test("requireRequesterInfo: trims noisy input and requires all approval fields", () => {
+  assert.deepStrictEqual(
+    requireRequesterInfo({
+      where_happening: "  Codex   in D:\\repos\\auth  ",
+      intended_use: "  call   auth-protected romaine APIs  ",
+      misc_identifier: "  anvil  ",
+    }),
+    {
+      whereHappening: "Codex in D:\\repos\\auth",
+      intendedUse: "call auth-protected romaine APIs",
+      miscIdentifier: "anvil",
+    },
   );
-  assert.throws(() => requireSelfIdentification(" "), /self_identification is required/);
-  assert.throws(() => requireSelfIdentification(null), /self_identification is required/);
+  assert.throws(() => requireRequesterInfo({}), /where_happening is required/);
+  assert.throws(
+    () => requireRequesterInfo({
+      where_happening: "Codex",
+      intended_use: "",
+      misc_identifier: "anvil",
+    }),
+    /intended_use is required/,
+  );
+  assert.throws(
+    () => requireRequesterInfo({
+      where_happening: "Codex",
+      intended_use: "API calls",
+      misc_identifier: " ",
+    }),
+    /misc_identifier is required/,
+  );
 });
 
-test("requireSelfIdentification: bounds stored display text", () => {
-  assert.strictEqual(requireSelfIdentification("x".repeat(600)).length, 500);
+test("requireRequesterInfo: bounds stored display text", () => {
+  const info = requireRequesterInfo({
+    where_happening: "x".repeat(600),
+    intended_use: "y".repeat(600),
+    misc_identifier: "z".repeat(120),
+  });
+  assert.strictEqual(info.whereHappening.length, 500);
+  assert.strictEqual(info.intendedUse.length, 500);
+  assert.strictEqual(info.miscIdentifier.length, 80);
+});
+
+test("encodeRequesterInfo/decodeRequesterInfo: round trips structured display fields", () => {
+  const info = {
+    whereHappening: "Codex in D:\\repos\\auth",
+    intendedUse: "call auth-protected romaine APIs",
+    miscIdentifier: "anvil",
+  };
+  assert.deepStrictEqual(decodeRequesterInfo(encodeRequesterInfo(info)), info);
+});
+
+test("decodeRequesterInfo: preserves legacy plain self-identification strings", () => {
+  assert.deepStrictEqual(decodeRequesterInfo("Codex legacy request"), {
+    whereHappening: "Codex legacy request",
+    intendedUse: "legacy request",
+    miscIdentifier: "legacy",
+  });
 });
 
 test("validateLoopbackRedirectUri: accepts localhost loopback callbacks", () => {

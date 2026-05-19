@@ -170,7 +170,9 @@ Start a request:
 curl -sS -X POST https://auth.romaine.life/api/cli/device \
   -H 'Content-Type: application/json' \
   -d '{
-    "self_identification": "Codex in Nelson's desktop auth repo session, asked to get a bot token for romaine API calls",
+    "where_happening": "Codex desktop session in D:\\repos\\auth",
+    "intended_use": "Use auth.romaine.life bot-token auth for follow-on romaine API calls requested in this session",
+    "misc_identifier": "anvil",
     "redirect_uri": "http://127.0.0.1:49152/callback",
     "state": "opaque-client-state",
     "code_challenge": "<base64url-sha256-code-verifier>",
@@ -191,9 +193,10 @@ Response:
 }
 ```
 
-`self_identification` is required and intentionally loose: callers should
-describe who is asking in human-readable form. The approval page shows this
-string before the admin approves.
+`where_happening`, `intended_use`, and `misc_identifier` are required and
+intentionally loose. Agent callers should describe where the request is coming
+from, what the token is intended for, and provide a random noun-style misc
+identifier. The approval page shows all three fields before the admin approves.
 
 The client should try to open `verification_uri_complete`. If that fails, show
 `verification_uri` and `user_code` so the admin can enter the code manually.

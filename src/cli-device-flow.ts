@@ -12,6 +12,12 @@ export type CliDeviceStatus =
   | "denied"
   | "expired";
 
+export interface CliRequesterInfo {
+  whereHappening: string;
+  intendedUse: string;
+  miscIdentifier: string;
+}
+
 export function randomUrlToken(bytes = 32): string {
   return crypto.randomBytes(bytes).toString("base64url");
 }
@@ -32,15 +38,53 @@ export function hashSecret(value: string): string {
   return crypto.createHash("sha256").update(value, "utf8").digest("base64url");
 }
 
-export function requireSelfIdentification(value: unknown): string {
+function requireRequestField(
+  value: unknown,
+  field: "where_happening" | "intended_use" | "misc_identifier",
+  maxLength: number,
+): string {
   if (typeof value !== "string") {
-    throw new Error("self_identification is required");
+    throw new Error(`${field} is required`);
   }
   const trimmed = value.replace(/\s+/g, " ").trim();
   if (!trimmed) {
-    throw new Error("self_identification is required");
+    throw new Error(`${field} is required`);
   }
-  return trimmed.slice(0, 500);
+  return trimmed.slice(0, maxLength);
+}
+
+export function requireRequesterInfo(body: Record<string, unknown>): CliRequesterInfo {
+  return {
+    whereHappening: requireRequestField(body.where_happening, "where_happening", 500),
+    intendedUse: requireRequestField(body.intended_use, "intended_use", 500),
+    miscIdentifier: requireRequestField(body.misc_identifier, "misc_identifier", 80),
+  };
+}
+
+export function encodeRequesterInfo(info: CliRequesterInfo): string {
+  return JSON.stringify({
+    v: 1,
+    where_happening: info.whereHappening,
+    intended_use: info.intendedUse,
+    misc_identifier: info.miscIdentifier,
+  });
+}
+
+export function decodeRequesterInfo(value: string): CliRequesterInfo {
+  try {
+    const parsed = JSON.parse(value) as {
+      where_happening?: unknown;
+      intended_use?: unknown;
+      misc_identifier?: unknown;
+    };
+    return requireRequesterInfo(parsed as Record<string, unknown>);
+  } catch {
+    return {
+      whereHappening: value,
+      intendedUse: "legacy request",
+      miscIdentifier: "legacy",
+    };
+  }
 }
 
 export function validateLoopbackRedirectUri(value: unknown): string | null {
