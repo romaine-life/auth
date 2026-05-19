@@ -54,6 +54,43 @@ export const verification = pgTable("verification", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Browser-approved CLI/device grants. A local CLI starts a pending request,
+// an admin approves it in their existing auth.romaine.life browser session,
+// and the CLI exchanges either its device_code or the one-time callback code
+// for the same 24h bot token minted by /admin/bot-tokens.
+export const cliDeviceGrant = pgTable(
+  "cli_device_grant",
+  {
+    id: text("id").primaryKey(),
+    deviceCodeHash: text("device_code_hash").notNull(),
+    userCodeHash: text("user_code_hash").notNull(),
+    exchangeCodeHash: text("exchange_code_hash"),
+    clientName: text("client_name").notNull(),
+    redirectUri: text("redirect_uri"),
+    state: text("state"),
+    codeChallenge: text("code_challenge"),
+    codeChallengeMethod: text("code_challenge_method"),
+    status: text("status").notNull().default("pending"),
+    approvedByUserId: text("approved_by_user_id").references(() => user.id, { onDelete: "set null" }),
+    approvedByEmail: text("approved_by_email"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    expiresAt: timestamp("expires_at").notNull(),
+    approvedAt: timestamp("approved_at"),
+    consumedAt: timestamp("consumed_at"),
+  },
+  (table) => ({
+    deviceCodeHashUnique: uniqueIndex("cli_device_grant_device_code_hash_unique").on(
+      table.deviceCodeHash,
+    ),
+    userCodeHashUnique: uniqueIndex("cli_device_grant_user_code_hash_unique").on(
+      table.userCodeHash,
+    ),
+    exchangeCodeHashUnique: uniqueIndex("cli_device_grant_exchange_code_hash_unique").on(
+      table.exchangeCodeHash,
+    ),
+  }),
+);
+
 // JWT plugin: stores the RSA keypair used to sign JWTs. JWKS at
 // /api/auth/jwks serves the public key; apps verify against that URL.
 // Field names match the plugin's expected JS property names (publicKey,

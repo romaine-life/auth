@@ -25,6 +25,7 @@ investing, house-hunt, and fzt-frontend.
 - `POST /api/auth/exchange/k8s` — exchange a session-pod's projected SA token for an auth.romaine.life `role=service` JWT
 - `POST /admin/bot-tokens` — admin-only: mint a 24h bot token (`role=admin`, `purpose=bot`) for break-glass CLI / curl use
 - `POST /admin/service-tokens` — admin-only: mint a 24h service token (`role=service`, `purpose=bot`, `actor_email=<admin>`) for calling service-only MCPs (e.g. `mcp-github`) from a workstation
+- `POST /api/cli/device` + `POST /api/cli/token` — browser-approved CLI/device flow for minting the same 24h bot token without copying an auth cookie
 - `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
@@ -155,6 +156,75 @@ label-free, same posture as the bot-token counter). A separate
 `console.warn` line per mint carries the admin's email and the issued
 `actor_email` (equal today, kept explicit so a future decoupling
 surfaces in the log diff).
+
+## CLI-approved bot-token flow
+
+`/api/cli/device` is the safer CLI path for agents like Codex. The local client
+creates a pending request, opens the browser approval page, and receives the
+same `role=admin`, `purpose=bot` JWT that `/admin/bot-tokens` mints after the
+signed-in admin approves.
+
+Start a request:
+
+```sh
+curl -sS -X POST https://auth.romaine.life/api/cli/device \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "client_name": "Codex desktop",
+    "redirect_uri": "http://127.0.0.1:49152/callback",
+    "state": "opaque-client-state",
+    "code_challenge": "<base64url-sha256-code-verifier>",
+    "code_challenge_method": "S256"
+  }'
+```
+
+Response:
+
+```json
+{
+  "device_code": "...",
+  "user_code": "VK-ABCD-1234",
+  "verification_uri": "https://auth.romaine.life/cli",
+  "verification_uri_complete": "https://auth.romaine.life/cli?user_code=VK-ABCD-1234",
+  "expires_in": 600,
+  "interval": 5
+}
+```
+
+The client should try to open `verification_uri_complete`. If that fails, show
+`verification_uri` and `user_code` so the admin can enter the code manually.
+After approval, the page loads the loopback `redirect_uri` in a hidden iframe
+with `?code=...&state=...`; it also displays the same one-time code for paste
+fallback.
+
+Poll with the device code:
+
+```sh
+curl -sS -X POST https://auth.romaine.life/api/cli/token \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+    "device_code": "<device_code>"
+  }'
+```
+
+Or exchange the callback/pasted one-time code with PKCE:
+
+```sh
+curl -sS -X POST https://auth.romaine.life/api/cli/token \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "grant_type": "authorization_code",
+    "code": "<one-time-code>",
+    "code_verifier": "<original-code-verifier>"
+  }'
+```
+
+The token response matches `/admin/bot-tokens`: `{ token, expires_at,
+expires_in_hours, purpose }`. Request secrets and one-time codes are stored only
+as SHA-256 hashes in Postgres. Loopback redirects are limited to explicit-port
+`http://localhost`, `http://127.0.0.1`, or `http://[::1]`, and loopback use
+requires `code_challenge_method=S256`.
 
 ## How apps consume this
 

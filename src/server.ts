@@ -4,10 +4,24 @@ import { cors } from "hono/cors";
 import { html, raw } from "hono/html";
 import { logger } from "hono/logger";
 import { setCookie, deleteCookie, getCookie } from "hono/cookie";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc } from "drizzle-orm";
 import { auth, resolveAllTrustedOrigins } from "./auth.js";
 import { db } from "./db/client.js";
-import { account, session, user } from "./db/schema.js";
+import { account, cliDeviceGrant, session, user } from "./db/schema.js";
+import {
+  appendCallbackParams,
+  CLI_DEVICE_EXPIRES_SECONDS,
+  CLI_DEVICE_POLL_INTERVAL_SECONDS,
+  generateUserCode,
+  hashSecret,
+  normalizeUserCode,
+  randomUrlToken,
+  sanitizeClientName,
+  validateLoopbackRedirectUri,
+  validatePkceInput,
+  verifyPkceS256,
+  type CliDeviceStatus,
+} from "./cli-device-flow.js";
 import {
   deleteProjectOrigins,
   listManagedOrigins,
@@ -2038,6 +2052,54 @@ app.get("/admin", async (c) => {
 // bot-token surface).
 const BOT_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 
+type BotTokenUser = {
+  id: string;
+  email: string;
+  name: string;
+  apps?: string;
+};
+
+async function mintAdminBotToken(
+  u: BotTokenUser,
+  source: "admin-console" | "cli-device",
+): Promise<{
+  token: string;
+  expires_at: number;
+  expires_in_hours: number;
+  purpose: "bot";
+}> {
+  let apps: Record<string, unknown> = {};
+  try {
+    apps = JSON.parse(u.apps ?? "{}");
+  } catch {
+    // Bad JSON in the apps column shouldn't block a bot-token mint.
+    apps = {};
+  }
+
+  const signed = await mintAuthJwt({
+    sub: u.id,
+    email: u.email,
+    name: u.name,
+    role: "admin",
+    apps,
+    purpose: "bot",
+    ttlSeconds: BOT_TOKEN_TTL_SECONDS,
+  });
+
+  recordAdminBotTokenMint();
+  console.warn(
+    source === "admin-console" ? "[/admin/bot-tokens] minted:" : "[/api/cli/token] minted:",
+    JSON.stringify({ email: u.email, exp: signed.exp, purpose: "bot", source }),
+  );
+
+  return {
+    token: signed.token,
+    expires_at: signed.exp,
+    expires_in_hours: 24,
+    purpose: "bot",
+  };
+}
+
 app.post("/admin/bot-tokens", async (c) => {
   const gate = await requireAdmin(c);
   if ("status" in gate) {
@@ -2055,46 +2117,12 @@ app.post("/admin/bot-tokens", async (c) => {
   }
 
   const u = gate.user as typeof gate.user & { role?: string; apps?: string };
-  let apps: Record<string, unknown> = {};
   try {
-    apps = JSON.parse(u.apps ?? "{}");
-  } catch {
-    // Bad JSON in the apps column shouldn't block a bot-token mint —
-    // mirror the cookie-path definePayload behavior of silently empty.
-    apps = {};
-  }
-
-  let signed;
-  try {
-    signed = await mintAuthJwt({
-      sub: u.id,
-      email: u.email,
-      name: u.name,
-      role: "admin",
-      apps,
-      purpose: "bot",
-      ttlSeconds: BOT_TOKEN_TTL_SECONDS,
-    });
+    return c.json(await mintAdminBotToken(u, "admin-console"));
   } catch (e) {
     console.error("[/admin/bot-tokens] mintAuthJwt failed:", e);
     return c.json({ error: "failed to mint token" }, 500);
   }
-
-  recordAdminBotTokenMint();
-  // Structured per-mint audit line. Carries the admin's email and the
-  // exp claim so a leaked-token investigation can correlate the
-  // structured log to the token's `exp` without seeing the token itself.
-  console.warn(
-    "[/admin/bot-tokens] minted:",
-    JSON.stringify({ email: u.email, exp: signed.exp, purpose: "bot" }),
-  );
-
-  return c.json({
-    token: signed.token,
-    expires_at: signed.exp,
-    expires_in_hours: 24,
-    purpose: "bot",
-  });
 });
 
 // Service-token mint. Sibling of /admin/bot-tokens above, but produces
@@ -2243,6 +2271,405 @@ app.post("/admin/users/:id", async (c) => {
     .set({ name, role, apps, updatedAt: new Date() })
     .where(eq(user.id, id));
   return c.redirect("/admin?ok=updated");
+});
+
+type CliDeviceGrantRow = typeof cliDeviceGrant.$inferSelect;
+
+async function readJsonObject(c: Context): Promise<Record<string, unknown>> {
+  const text = await c.req.text();
+  if (!text.trim()) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("invalid JSON body");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("JSON body must be an object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function publicBaseUrl(c: Context): string {
+  return (process.env.BASE_URL ?? new URL(c.req.url).origin).replace(/\/$/, "");
+}
+
+function cliGrantExpired(grant: CliDeviceGrantRow): boolean {
+  return grant.expiresAt.getTime() <= Date.now();
+}
+
+async function markCliGrantExpired(grant: CliDeviceGrantRow): Promise<void> {
+  if (grant.status === "pending" || grant.status === "approved") {
+    await db
+      .update(cliDeviceGrant)
+      .set({ status: "expired" satisfies CliDeviceStatus })
+      .where(eq(cliDeviceGrant.id, grant.id));
+  }
+}
+
+async function findCliGrantByUserCode(userCode: string): Promise<CliDeviceGrantRow | null> {
+  const rows = await db
+    .select()
+    .from(cliDeviceGrant)
+    .where(eq(cliDeviceGrant.userCodeHash, hashSecret(normalizeUserCode(userCode))))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+async function findCliGrantByDeviceCode(deviceCode: string): Promise<CliDeviceGrantRow | null> {
+  const rows = await db
+    .select()
+    .from(cliDeviceGrant)
+    .where(eq(cliDeviceGrant.deviceCodeHash, hashSecret(deviceCode)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+async function findCliGrantByExchangeCode(code: string): Promise<CliDeviceGrantRow | null> {
+  const rows = await db
+    .select()
+    .from(cliDeviceGrant)
+    .where(eq(cliDeviceGrant.exchangeCodeHash, hashSecret(code)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+function oauthError(c: Context, error: string, status = 400, extra: Record<string, unknown> = {}) {
+  return c.json({ error, ...extra }, status as Parameters<typeof c.json>[1]);
+}
+
+function cliStatusMessage(grant: CliDeviceGrantRow | null): string {
+  if (!grant) return "No pending request matches that code.";
+  if (cliGrantExpired(grant)) return "That request expired. Start a new request from Codex.";
+  if (grant.status === "pending") return "Review the request below before approving.";
+  if (grant.status === "approved") return "That request was already approved.";
+  if (grant.status === "consumed") return "That request has already been exchanged for a bot token.";
+  if (grant.status === "denied") return "That request was denied.";
+  return "That request expired. Start a new request from Codex.";
+}
+
+function cliApprovalPage(opts: {
+  userCode: string;
+  grant: CliDeviceGrantRow | null;
+  message: string;
+  callbackUrl?: string | null;
+  exchangeCode?: string | null;
+}) {
+  const grant = opts.grant;
+  return SHELL("Approve CLI token - auth.romaine.life", html`
+    ${topbar("online")}
+    <main class="main">
+      <div class="vk-card">
+        <div class="iris-wrap">${IRIS}</div>
+        <h1>CLI token approval</h1>
+        <p class="subtitle">Bot token request</p>
+        <p class="lede">${opts.message}</p>
+
+        ${!grant && !opts.exchangeCode ? html`
+          <form class="admin-card" method="GET" action="/cli">
+            <div class="admin-grid">
+              <label>Code</label>
+              <input name="user_code" value="${opts.userCode}" placeholder="VK-ABCD-1234" />
+            </div>
+            <div class="admin-actions">
+              <button class="admin-btn" type="submit">Review request</button>
+            </div>
+          </form>
+        ` : html``}
+
+        ${grant ? html`
+          <div class="admin-card">
+            <div class="admin-head">
+              <span class="email">${grant.clientName}</span>
+              <span class="since">${grant.expiresAt.toISOString().slice(11, 16)} UTC</span>
+            </div>
+            <div class="admin-grid">
+              <label>User code</label>
+              <input readonly value="${opts.userCode}" />
+              <label>Status</label>
+              <input readonly value="${grant.status}" />
+              <label>Return URL</label>
+              <input readonly value="${grant.redirectUri ?? "none"}" />
+            </div>
+          </div>
+        ` : html``}
+
+        ${grant && grant.status === "pending" && !cliGrantExpired(grant) ? html`
+          <form class="signin-stack" method="POST" action="/cli/approve">
+            <input type="hidden" name="user_code" value="${opts.userCode}" />
+            <button class="signin-btn" type="submit" name="decision" value="approve">
+              <span class="signin-label">Approve bot token</span>
+              <span class="signin-meta">24h</span>
+            </button>
+            <button class="signin-btn" type="submit" name="decision" value="deny">
+              <span class="signin-label">Deny request</span>
+              <span class="signin-meta">cancel</span>
+            </button>
+          </form>
+        ` : html``}
+
+        ${opts.exchangeCode ? html`
+          <div class="bot-token-result" style="display:block">
+            <div class="bot-token-meta">One-time fallback code</div>
+            <textarea class="bot-token-jwt" readonly rows="3">${opts.exchangeCode}</textarea>
+          </div>
+        ` : html``}
+
+        ${opts.callbackUrl ? html`
+          <p class="vk-footnote">
+            Trying to return to the local application. If it does not complete,
+            paste the fallback code into Codex.
+          </p>
+          <iframe src="${opts.callbackUrl}" style="display:none" title="CLI callback"></iframe>
+          <p class="vk-footnote"><a href="${opts.callbackUrl}">Return to application</a></p>
+        ` : html``}
+      </div>
+    </main>
+    ${footer()}
+  `);
+}
+
+app.post("/api/cli/device", async (c) => {
+  if (TEST_MODE) return c.json({ error: "cli device flow unavailable in test mode" }, 404);
+
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonObject(c);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+
+  let redirectUri: string | null;
+  let pkce: { codeChallenge: string | null; codeChallengeMethod: "S256" | null };
+  try {
+    redirectUri = validateLoopbackRedirectUri(body.redirect_uri);
+    pkce = validatePkceInput(
+      redirectUri,
+      body.code_challenge,
+      body.code_challenge_method,
+    );
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+
+  const deviceCode = randomUrlToken();
+  const userCode = generateUserCode();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + CLI_DEVICE_EXPIRES_SECONDS * 1000);
+  const verificationUri = `${publicBaseUrl(c)}/cli`;
+  await db.insert(cliDeviceGrant).values({
+    id: crypto.randomUUID(),
+    deviceCodeHash: hashSecret(deviceCode),
+    userCodeHash: hashSecret(normalizeUserCode(userCode)),
+    clientName: sanitizeClientName(body.client_name),
+    redirectUri,
+    state: typeof body.state === "string" ? body.state.slice(0, 500) : null,
+    codeChallenge: pkce.codeChallenge,
+    codeChallengeMethod: pkce.codeChallengeMethod,
+    status: "pending" satisfies CliDeviceStatus,
+    createdAt: now,
+    expiresAt,
+  });
+
+  return c.json({
+    device_code: deviceCode,
+    user_code: userCode,
+    verification_uri: verificationUri,
+    verification_uri_complete: `${verificationUri}?user_code=${encodeURIComponent(userCode)}`,
+    expires_in: CLI_DEVICE_EXPIRES_SECONDS,
+    interval: CLI_DEVICE_POLL_INTERVAL_SECONDS,
+  });
+});
+
+app.get("/cli", async (c) => {
+  const rawUserCode = c.req.query("user_code") ?? "";
+  const userCode = rawUserCode.trim();
+  if (!userCode) {
+    return c.html(cliApprovalPage({
+      userCode: "",
+      grant: null,
+      message: "Enter the code shown by Codex to approve a bot-token request.",
+    }));
+  }
+
+  const gate = await requireAdmin(c);
+  if ("status" in gate) {
+    if (gate.status === 403) return c.text("forbidden", 403);
+    return c.redirect(`/sign-in/microsoft?callbackURL=${encodeURIComponent(`/cli?user_code=${userCode}`)}`);
+  }
+
+  const grant = await findCliGrantByUserCode(userCode);
+  if (grant && cliGrantExpired(grant)) await markCliGrantExpired(grant);
+  return c.html(cliApprovalPage({
+    userCode,
+    grant,
+    message: cliStatusMessage(grant),
+  }));
+});
+
+app.post("/cli/approve", async (c) => {
+  const gate = await requireAdmin(c);
+  if ("status" in gate) return c.text("forbidden", gate.status === 302 ? 401 : 403);
+  if (TEST_MODE) return c.text("cli device flow unavailable in test mode", 404);
+
+  const form = await c.req.formData();
+  const userCode = String(form.get("user_code") ?? "").trim();
+  const decision = String(form.get("decision") ?? "");
+  if (!userCode) return c.text("missing user_code", 400);
+  if (decision !== "approve" && decision !== "deny") return c.text("invalid decision", 400);
+
+  const grant = await findCliGrantByUserCode(userCode);
+  if (!grant) {
+    return c.html(cliApprovalPage({
+      userCode,
+      grant: null,
+      message: "No pending request matches that code.",
+    }), 404);
+  }
+  if (cliGrantExpired(grant)) {
+    await markCliGrantExpired(grant);
+    return c.html(cliApprovalPage({
+      userCode,
+      grant,
+      message: "That request expired. Start a new request from Codex.",
+    }), 400);
+  }
+  if (grant.status !== "pending") {
+    return c.html(cliApprovalPage({
+      userCode,
+      grant,
+      message: cliStatusMessage(grant),
+    }), 409);
+  }
+
+  if (decision === "deny") {
+    const updated = await db
+      .update(cliDeviceGrant)
+      .set({ status: "denied" satisfies CliDeviceStatus })
+      .where(and(eq(cliDeviceGrant.id, grant.id), eq(cliDeviceGrant.status, "pending")))
+      .returning();
+    if (updated.length === 0) {
+      const latest = await findCliGrantByUserCode(userCode);
+      return c.html(cliApprovalPage({
+        userCode,
+        grant: latest,
+        message: cliStatusMessage(latest),
+      }), 409);
+    }
+    return c.html(cliApprovalPage({
+      userCode,
+      grant: updated[0],
+      message: "Request denied.",
+    }));
+  }
+
+  const exchangeCode = randomUrlToken();
+  const u = gate.user as typeof gate.user & { role?: string };
+  const updated = await db
+    .update(cliDeviceGrant)
+    .set({
+      status: "approved" satisfies CliDeviceStatus,
+      exchangeCodeHash: hashSecret(exchangeCode),
+      approvedByUserId: u.id,
+      approvedByEmail: u.email,
+      approvedAt: new Date(),
+    })
+    .where(and(eq(cliDeviceGrant.id, grant.id), eq(cliDeviceGrant.status, "pending")))
+    .returning();
+  if (updated.length === 0) {
+    const latest = await findCliGrantByUserCode(userCode);
+    return c.html(cliApprovalPage({
+      userCode,
+      grant: latest,
+      message: cliStatusMessage(latest),
+    }), 409);
+  }
+  const approved = updated[0];
+  const callbackUrl = approved.redirectUri
+    ? appendCallbackParams(approved.redirectUri, exchangeCode, approved.state)
+    : null;
+  return c.html(cliApprovalPage({
+    userCode,
+    grant: approved,
+    message: "Approved. Codex can now exchange this request for a bot token.",
+    callbackUrl,
+    exchangeCode,
+  }));
+});
+
+async function consumeApprovedCliGrant(c: Context, grant: CliDeviceGrantRow) {
+  if (cliGrantExpired(grant)) {
+    await markCliGrantExpired(grant);
+    return oauthError(c, "expired_token");
+  }
+  if (grant.status === "pending") {
+    return oauthError(c, "authorization_pending", 400, {
+      interval: CLI_DEVICE_POLL_INTERVAL_SECONDS,
+    });
+  }
+  if (grant.status === "denied") return oauthError(c, "access_denied");
+  if (grant.status === "consumed") return oauthError(c, "invalid_grant");
+  if (grant.status !== "approved") return oauthError(c, "expired_token");
+  if (!grant.approvedByUserId) return oauthError(c, "invalid_grant");
+
+  const rows = await db
+    .select()
+    .from(user)
+    .where(eq(user.id, grant.approvedByUserId))
+    .limit(1);
+  const approver = rows[0];
+  if (!approver || approver.role !== "admin") return oauthError(c, "access_denied", 403);
+
+  const consumed = await db
+    .update(cliDeviceGrant)
+    .set({ status: "consumed" satisfies CliDeviceStatus, consumedAt: new Date() })
+    .where(and(eq(cliDeviceGrant.id, grant.id), eq(cliDeviceGrant.status, "approved")))
+    .returning();
+  if (consumed.length === 0) return oauthError(c, "invalid_grant");
+
+  try {
+    return c.json(await mintAdminBotToken(approver, "cli-device"));
+  } catch (e) {
+    console.error("[/api/cli/token] signJWT failed:", e);
+    return c.json({ error: "failed to mint token" }, 500);
+  }
+}
+
+app.post("/api/cli/token", async (c) => {
+  if (TEST_MODE) return c.json({ error: "cli device flow unavailable in test mode" }, 404);
+
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonObject(c);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+
+  const grantType = String(body.grant_type ?? (
+    body.device_code ? "urn:ietf:params:oauth:grant-type:device_code" : "authorization_code"
+  ));
+  if (grantType === "urn:ietf:params:oauth:grant-type:device_code") {
+    if (typeof body.device_code !== "string" || !body.device_code) {
+      return oauthError(c, "invalid_request", 400, { error_description: "device_code is required" });
+    }
+    const grant = await findCliGrantByDeviceCode(body.device_code);
+    if (!grant) return oauthError(c, "invalid_grant");
+    return consumeApprovedCliGrant(c, grant);
+  }
+
+  if (grantType === "authorization_code") {
+    if (typeof body.code !== "string" || !body.code) {
+      return oauthError(c, "invalid_request", 400, { error_description: "code is required" });
+    }
+    const grant = await findCliGrantByExchangeCode(body.code);
+    if (!grant) return oauthError(c, "invalid_grant");
+    if (grant.codeChallenge && !verifyPkceS256(body.code_verifier, grant.codeChallenge)) {
+      return oauthError(c, "invalid_grant", 400, { error_description: "PKCE verification failed" });
+    }
+    return consumeApprovedCliGrant(c, grant);
+  }
+
+  return oauthError(c, "unsupported_grant_type");
 });
 
 // Better Auth's `asResponse: true` returns a full Response object including
