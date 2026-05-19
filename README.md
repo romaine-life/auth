@@ -59,10 +59,17 @@ service callers needs no code changes.
 
 Inbound bearer is the pod's projected SA token (RS256, audience pinned to
 `https://auth.romaine.life` per `K8S_SERVICE_AUDIENCE`, namespace+SA pinned
-per `K8S_SERVICE_SA_ALLOWLIST`). The handler reads the bound pod's
+per `K8S_SERVICE_SA_ALLOWLIST`). Per-session consumers read the bound pod's
 `tank-operator/owner-email` and `tank-operator/session-id` annotations at
-exchange time — cross-namespace `pods/get` RBAC for each consumer namespace
-is scaffolded from `k8sOidc.serviceConsumerNamespaces` in `k8s/values.yaml`.
+exchange time; pod-stable consumers use a configured stable service identity.
+Cross-namespace `pods/get` RBAC for annotation-reading consumer namespaces is
+scaffolded from `k8sOidc.serviceConsumerNamespaces` in `k8s/values.yaml`.
+
+Tank-operator native test-slot orchestrators are allowlisted as
+`tank-operator-slot-N/tank-operator-slot-N` and route through the same elevated
+`tank-operator` consumer as prod, with slot-specific synthetic service users.
+That keeps `/api/auth/exchange/k8s` testable for on-behalf-of repo discovery
+without collapsing slot audit rows into the prod orchestrator identity.
 
 Service-principal users are stored in Better Auth's user table under a
 reserved synthetic email (`pod-<session-id>@service.<consumer>.romaine.life`)

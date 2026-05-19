@@ -92,15 +92,20 @@ k8sOidc:
   #   for the orchestrator) so a leaked session JWT and a leaked
   #   orchestrator JWT live in different reserved synthetic-email
   #   subdomains and can't be swapped for each other downstream.
-  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-k8s/mcp-k8s,mcp-argocd/mcp-argocd,mcp-azure-personal/mcp-azure-personal,hermes/hermes,tank-operator/tank-operator"
+  # - Tank-operator native test-slot orchestrators run as
+  #   `tank-operator-slot-N/tank-operator-slot-N`. They need the same
+  #   actor_email override for testable repo discovery, but auth maps them
+  #   to slot-specific synthetic service users for audit separation.
+  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-k8s/mcp-k8s,mcp-argocd/mcp-argocd,mcp-azure-personal/mcp-azure-personal,hermes/hermes,tank-operator/tank-operator,tank-operator-slot-1/tank-operator-slot-1,tank-operator-slot-2/tank-operator-slot-2,tank-operator-slot-3/tank-operator-slot-3,tank-operator-slot-4/tank-operator-slot-4,tank-operator-slot-5/tank-operator-slot-5,tank-operator-slot-6/tank-operator-slot-6,tank-operator-slot-7/tank-operator-slot-7,tank-operator-slot-8/tank-operator-slot-8,tank-operator-slot-9/tank-operator-slot-9,tank-operator-slot-10/tank-operator-slot-10"
   # Namespaces hosting service-principal consumer pods — the auth pod
   # gets a cross-namespace Role + RoleBinding for `pods get` in each so
   # /api/auth/exchange/k8s can read pod metadata at exchange time.
   # Per-session consumers also need lineage annotations
   # (tank-operator/owner-email, tank-operator/session-id) on their
-  # pods; pod-stable consumers (shared MCP servers) do not. Add a
-  # namespace here when onboarding a new consumer, and add a matching
-  # row to NAMESPACE_TO_CONSUMER in src/service-exchange.ts.
+  # pods; pod-stable consumers (shared MCP servers and tank-operator
+  # test-slot orchestrators) do not. Add a namespace here only when the
+  # consumer reads pod annotations, and add a matching route in
+  # src/service-consumers.ts.
   serviceConsumerNamespaces:
     - tank-operator-sessions
     - mcp-k8s

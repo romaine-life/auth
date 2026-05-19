@@ -1,10 +1,10 @@
 // k8s SA-token → auth.romaine.life service-principal JWT exchange.
 //
 // Routes the inbound bearer through the existing k8s-auth verifier,
-// resolves the bound pod's lineage annotations, idempotently upserts a
-// Better Auth user under a reserved synthetic-email domain, and mints
-// a standard auth.romaine.life JWT through the shared `mintAuthJwt`
-// helper (src/mint-jwt.ts).
+// resolves the consumer's lineage, idempotently upserts a Better Auth user
+// under a reserved synthetic-email domain, and mints a standard
+// auth.romaine.life JWT through the shared `mintAuthJwt` helper
+// (src/mint-jwt.ts).
 //
 // The issued JWT is shaped exactly like a human auth.romaine.life JWT
 // (same `iss`, `aud`, JWKS-published signing key) so downstream apps can
@@ -20,6 +20,7 @@ import { user } from "./db/schema.js";
 import { parseAllowlist, verifyK8sSAToken } from "./k8s-auth.js";
 import { readPodLineage, type PodLineage } from "./k8s-pod.js";
 import { mintAuthJwt } from "./mint-jwt.js";
+import { consumerForNamespace } from "./service-consumers.js";
 import { buildServiceEmail, buildServiceName } from "./synthetic-email.js";
 import {
   ExchangeError,
@@ -33,117 +34,6 @@ export {
   ExchangeError,
   serviceUserId,
   type ExchangeFailureReason,
-};
-
-/** Per-consumer lineage policy.
- *
- *  - `per-session` (default for per-user pods like tank-operator's
- *    session pods): the pod carries `tank-operator/owner-email` +
- *    `tank-operator/session-id` annotations. readPodLineage reads them
- *    at exchange time; actor_email = owner-email; sessionId = session-id.
- *    Each exchange produces a JWT whose synthetic identity is specific
- *    to the human-and-session pair.
- *
- *  - `pod-stable` (shared MCP servers like mcp-glimmung): there is no
- *    per-pod human actor — the deployment is a platform-wide
- *    infrastructure component that serves many users. The exchange
- *    skips annotation reads and uses a fixed `stableId` configured
- *    here. actor_email collapses to the synthetic email (the service
- *    IS the actor), so glimmung's audit log says "this call came from
- *    mcp-glimmung" rather than naming a specific user. Per-request
- *    user attribution is a future enhancement that would forward the
- *    caller's identity through the MCP layer (kept out of scope per
- *    the design note on the glimmung-side cutover PR).
- */
-/** Optional `pod-stable` capability: when true, the consumer's caller
- *  may supply a chosen `actor_email` on the exchange request. The
- *  synthetic identity (sub/email/name) stays based on stableId — only
- *  the `actor_email` claim changes — so audit logs still attribute
- *  the call to the orchestrator-as-issuer, with the on-behalf-of
- *  user named in `actor_email`.
- *
- *  Today this is set ONLY on the `tank-operator` orchestrator entry.
- *  The orchestrator forwards a SPA user's email when it needs to make
- *  a per-user MCP call (today: mcp-github → list a user's installation
- *  repos for the session-creation picker). Other in-cluster services
- *  (mcp-k8s, mcp-argocd, etc.) have no such use case and stay
- *  un-elevated by default. */
-type ConsumerConfig =
-  | { slug: string; mode: "per-session" }
-  | {
-      slug: string;
-      mode: "pod-stable";
-      stableId: string;
-      /** When true, the route handler may forward a caller-supplied
-       *  actor_email to the mint. Defaults to false. */
-      allowActorOverride?: boolean;
-    };
-
-/** Map from k8s namespace to consumer config. Each consumer slug must
- *  have a matching subdomain registered in RESERVED_SERVICE_EMAIL_DOMAINS
- *  in src/synthetic-email.ts. Add a row here when onboarding a new
- *  consumer AND extend RESERVED_SERVICE_EMAIL_DOMAINS — both are
- *  required, by construction (buildServiceEmail refuses unregistered
- *  consumers). */
-const NAMESPACE_TO_CONSUMER: Record<string, ConsumerConfig> = {
-  "tank-operator-sessions": { slug: "tank", mode: "per-session" },
-  "mcp-k8s": {
-    slug: "mcp-k8s",
-    mode: "pod-stable",
-    stableId: "mcp-k8s",
-  },
-  "mcp-argocd": {
-    slug: "mcp-argocd",
-    mode: "pod-stable",
-    stableId: "mcp-argocd",
-  },
-  "mcp-azure-personal": {
-    slug: "mcp-azure-personal",
-    mode: "pod-stable",
-    stableId: "mcp-azure-personal",
-  },
-  // Hermes (`nelsong6/hermes`) — singleton AI-agent StatefulSet
-  // calling tank-operator's MCP servers (mcp-github, mcp-tank-operator,
-  // mcp-glimmung) from its own pod. No per-pod human actor: one
-  // Hermes pod serves every user with hermes-access. Per-request user
-  // attribution through the MCP layer is the same out-of-scope
-  // enhancement called out on the other pod-stable consumers above.
-  // See nelsong6/tank-operator#540.
-  hermes: {
-    slug: "hermes",
-    mode: "pod-stable",
-    stableId: "hermes",
-  },
-  // Tank-operator's orchestrator (the long-lived Deployment in the
-  // `tank-operator` namespace). Distinct from `tank-operator-sessions`
-  // above, which keys per-session lineage from pod annotations: this
-  // entry is the orchestrator itself, calling out to Hermes' API server
-  // for hermes_gui session turns (#540 follow-up). Two distinct slugs
-  // by design — a leaked session JWT (subdomain `service.tank...`) and
-  // a leaked orchestrator JWT (subdomain `service.tank-operator...`)
-  // are not interchangeable in any downstream verifier. stableId is
-  // fixed at `orchestrator` because there's only ever one logical
-  // orchestrator identity per deployment; pod restarts on the same
-  // Deployment continue to mint under the same synthetic user row.
-  "tank-operator": {
-    slug: "tank-operator",
-    mode: "pod-stable",
-    stableId: "orchestrator",
-    // Stage 2 of the per-session repo-selection feature
-    // (nelsong6/tank-operator stage 2): the orchestrator needs to call
-    // mcp-github to enumerate a SPA user's installation repos for the
-    // splash-page picker, but the orchestrator pod is not bound to any
-    // one user. By design we don't move GitHub App credentials back into
-    // the orchestrator (that would undo the mcp-github extraction). The
-    // alternative is to let mcp-github keep its existing actor_email →
-    // installation_id lookup, and let the orchestrator mint a service
-    // JWT with the SPA caller's email in actor_email. This flag opens
-    // that minting path for the orchestrator's namespace ONLY. mcp-github
-    // sees a normal service JWT — no custom side-channel — and routes
-    // it to the right installation. See nelsong6/tank-operator stage 2
-    // PR for the full chain.
-    allowActorOverride: true,
-  },
 };
 
 const ROLE = "service" as const;
@@ -239,10 +129,10 @@ export async function exchangeServiceAccountToken(
   }
 
   // 3. Map namespace → consumer slug.
-  const consumer = NAMESPACE_TO_CONSUMER[verified.namespace];
+  const consumer = consumerForNamespace(verified.namespace);
   if (!consumer) {
     throw new ExchangeError(
-      `namespace ${verified.namespace} has no consumer mapping; add it to NAMESPACE_TO_CONSUMER`,
+      `namespace ${verified.namespace} has no consumer mapping; add it to service-consumers`,
       403,
       "denied_unknown_namespace",
     );
