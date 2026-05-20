@@ -69,8 +69,11 @@ scaffolded from `k8sOidc.serviceConsumerNamespaces` in `k8s/values.yaml`.
 Tank-operator native test-slot orchestrators are allowlisted as
 `tank-operator-slot-N/tank-operator-slot-N` and route through the same elevated
 `tank-operator` consumer as prod, with slot-specific synthetic service users.
-That keeps `/api/auth/exchange/k8s` testable for on-behalf-of repo discovery
-without collapsing slot audit rows into the prod orchestrator identity.
+Tank-operator native test-slot session pods are allowlisted as
+`tank-operator-slot-N-sessions/tank-operator-slot-N-session` and route through
+the per-session `tank` consumer with slot-prefixed synthetic ids. That keeps
+`/api/auth/exchange/k8s` testable for both repo discovery and repo cloning
+without collapsing slot audit rows into prod identities.
 
 Service-principal users are stored in Better Auth's user table under a
 reserved synthetic email (`pod-<session-id>@service.<consumer>.romaine.life`)

@@ -14,7 +14,14 @@
  *    consumer explicitly opts into actor_email override.
  */
 export type ConsumerConfig =
-  | { slug: string; mode: "per-session" }
+  | {
+      slug: string;
+      mode: "per-session";
+      /** Optional stable-id prefix for non-prod session namespaces.
+       *  Keeps synthetic service users distinct when test-slot session ids
+       *  overlap with production session ids. */
+      sessionIdPrefix?: string;
+    }
   | {
       slug: string;
       mode: "pod-stable";
@@ -64,12 +71,22 @@ const NAMESPACE_TO_CONSUMER: Record<string, ConsumerConfig> = {
 };
 
 const TANK_OPERATOR_SLOT_NAMESPACE = /^tank-operator-slot-([1-9][0-9]*)$/;
+const TANK_OPERATOR_SLOT_SESSION_NAMESPACE =
+  /^tank-operator-slot-([1-9][0-9]*)-sessions$/;
 
 export function consumerForNamespace(namespace: string): ConsumerConfig | undefined {
   const ns = namespace.trim();
   const staticConsumer = NAMESPACE_TO_CONSUMER[ns];
   if (staticConsumer) {
     return staticConsumer;
+  }
+  const slotSession = TANK_OPERATOR_SLOT_SESSION_NAMESPACE.exec(ns);
+  if (slotSession) {
+    return {
+      slug: "tank",
+      mode: "per-session",
+      sessionIdPrefix: `slot-${slotSession[1]}-session-`,
+    };
   }
   const slot = TANK_OPERATOR_SLOT_NAMESPACE.exec(ns);
   if (!slot) {

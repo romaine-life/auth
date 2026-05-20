@@ -10,8 +10,8 @@ tank-operator/session-id) at exchange time — see src/k8s-pod.ts.
 Scoped strictly to `pods get` (no list, no watch, no other resources).
 This is the minimum surface required to resolve a single pod by name,
 which is all the exchange handler does. Adding a new consumer namespace
-is one entry in values.yaml here PLUS one entry in NAMESPACE_TO_CONSUMER
-in src/service-exchange.ts — both required by construction.
+requires an entry in values.yaml here plus a matching route in
+src/service-consumers.ts — both required by construction.
 
 See nelsong6/tank-operator#486.
 */}}

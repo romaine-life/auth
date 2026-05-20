@@ -149,6 +149,12 @@ export async function exchangeServiceAccountToken(
   } else {
     try {
       lineage = await readPodLineage(verified.namespace, verified.pod.name);
+      if (consumer.sessionIdPrefix) {
+        lineage = {
+          ...lineage,
+          sessionId: `${consumer.sessionIdPrefix}${lineage.sessionId}`,
+        };
+      }
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes("missing annotation")) {

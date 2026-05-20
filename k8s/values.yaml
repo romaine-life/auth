@@ -96,7 +96,37 @@ k8sOidc:
   #   `tank-operator-slot-N/tank-operator-slot-N`. They need the same
   #   actor_email override for testable repo discovery, but auth maps them
   #   to slot-specific synthetic service users for audit separation.
-  serviceSaAllowlist: "tank-operator-sessions/claude-session,mcp-k8s/mcp-k8s,mcp-argocd/mcp-argocd,mcp-azure-personal/mcp-azure-personal,hermes/hermes,tank-operator/tank-operator,tank-operator-slot-1/tank-operator-slot-1,tank-operator-slot-2/tank-operator-slot-2,tank-operator-slot-3/tank-operator-slot-3,tank-operator-slot-4/tank-operator-slot-4,tank-operator-slot-5/tank-operator-slot-5,tank-operator-slot-6/tank-operator-slot-6,tank-operator-slot-7/tank-operator-slot-7,tank-operator-slot-8/tank-operator-slot-8,tank-operator-slot-9/tank-operator-slot-9,tank-operator-slot-10/tank-operator-slot-10"
+  # - Tank-operator native test-slot session pods run as
+  #   `tank-operator-slot-N-sessions/tank-operator-slot-N-session`. They
+  #   use the per-session `tank` consumer with slot-prefixed synthetic ids
+  #   so slot-local session ids cannot collide with prod session ids.
+  serviceSaAllowlist: >-
+    tank-operator-sessions/claude-session,
+    mcp-k8s/mcp-k8s,
+    mcp-argocd/mcp-argocd,
+    mcp-azure-personal/mcp-azure-personal,
+    hermes/hermes,
+    tank-operator/tank-operator,
+    tank-operator-slot-1/tank-operator-slot-1,
+    tank-operator-slot-2/tank-operator-slot-2,
+    tank-operator-slot-3/tank-operator-slot-3,
+    tank-operator-slot-4/tank-operator-slot-4,
+    tank-operator-slot-5/tank-operator-slot-5,
+    tank-operator-slot-6/tank-operator-slot-6,
+    tank-operator-slot-7/tank-operator-slot-7,
+    tank-operator-slot-8/tank-operator-slot-8,
+    tank-operator-slot-9/tank-operator-slot-9,
+    tank-operator-slot-10/tank-operator-slot-10,
+    tank-operator-slot-1-sessions/tank-operator-slot-1-session,
+    tank-operator-slot-2-sessions/tank-operator-slot-2-session,
+    tank-operator-slot-3-sessions/tank-operator-slot-3-session,
+    tank-operator-slot-4-sessions/tank-operator-slot-4-session,
+    tank-operator-slot-5-sessions/tank-operator-slot-5-session,
+    tank-operator-slot-6-sessions/tank-operator-slot-6-session,
+    tank-operator-slot-7-sessions/tank-operator-slot-7-session,
+    tank-operator-slot-8-sessions/tank-operator-slot-8-session,
+    tank-operator-slot-9-sessions/tank-operator-slot-9-session,
+    tank-operator-slot-10-sessions/tank-operator-slot-10-session
   # Namespaces hosting service-principal consumer pods — the auth pod
   # gets a cross-namespace Role + RoleBinding for `pods get` in each so
   # /api/auth/exchange/k8s can read pod metadata at exchange time.
@@ -113,3 +143,13 @@ k8sOidc:
     - mcp-azure-personal
     - hermes
     - tank-operator
+    - tank-operator-slot-1-sessions
+    - tank-operator-slot-2-sessions
+    - tank-operator-slot-3-sessions
+    - tank-operator-slot-4-sessions
+    - tank-operator-slot-5-sessions
+    - tank-operator-slot-6-sessions
+    - tank-operator-slot-7-sessions
+    - tank-operator-slot-8-sessions
+    - tank-operator-slot-9-sessions
+    - tank-operator-slot-10-sessions
