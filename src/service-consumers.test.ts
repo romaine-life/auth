@@ -20,8 +20,19 @@ test("consumerForNamespace maps tank test slots to elevated pod-stable consumers
   });
 });
 
+test("consumerForNamespace maps tank test-slot sessions to per-session consumers", () => {
+  assert.deepStrictEqual(consumerForNamespace("tank-operator-slot-5-sessions"), {
+    slug: "tank",
+    mode: "per-session",
+    sessionIdPrefix: "slot-5-session-",
+  });
+});
+
 test("consumerForNamespace rejects non-canonical tank slot namespaces", () => {
   assert.strictEqual(consumerForNamespace("tank-operator-slot-0"), undefined);
   assert.strictEqual(consumerForNamespace("tank-operator-slot-alpha"), undefined);
   assert.strictEqual(consumerForNamespace("other-slot-5"), undefined);
+  assert.strictEqual(consumerForNamespace("tank-operator-slot-0-sessions"), undefined);
+  assert.strictEqual(consumerForNamespace("tank-operator-slot-alpha-sessions"), undefined);
+  assert.strictEqual(consumerForNamespace("other-slot-5-sessions"), undefined);
 });
