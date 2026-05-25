@@ -13,8 +13,8 @@
 --
 -- One-shot apply against the auth-db CNPG cluster:
 --
---   kubectl exec -n auth -i auth-db-1 -- \
---     psql -U postgres -d app < drizzle/0001_oidc_provider.sql
+--   kubectl exec -n auth -i auth-db-1 -c postgres -- \
+--     psql -U postgres -d auth < drizzle/0001-oidc-provider.sql
 --
 -- Idempotent on re-apply (IF NOT EXISTS on every object). Safe to run
 -- twice or to inline into an ad-hoc psql session.
