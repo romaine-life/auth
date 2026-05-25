@@ -4,12 +4,19 @@
 
 locals {
   infra = {
-    resource_group_name = "infra"
-    key_vault_name      = "romaine-kv"
+    resource_group_name   = "infra"
+    shared_key_vault_name = "romaine-kv"
   }
 }
 
-data "azurerm_key_vault" "main" {
-  name                = local.infra.key_vault_name
+data "azurerm_client_config" "current" {}
+
+data "azurerm_key_vault" "shared" {
+  name                = local.infra.shared_key_vault_name
+  resource_group_name = local.infra.resource_group_name
+}
+
+data "azurerm_user_assigned_identity" "external_secrets" {
+  name                = "infra-shared-identity"
   resource_group_name = local.infra.resource_group_name
 }
