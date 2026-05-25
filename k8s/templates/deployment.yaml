@@ -40,7 +40,7 @@ spec:
                 secretKeyRef:
                   name: auth-db-app
                   key: uri
-            # ExternalSecret syncs these from romaine-kv → `auth-oauth` Secret.
+            # ExternalSecret syncs these from ng6-auth -> `auth-oauth` Secret.
             - name: MICROSOFT_CLIENT_ID
               valueFrom:
                 secretKeyRef:
@@ -69,9 +69,9 @@ spec:
             # OIDC provider plugin (src/auth.ts) — client_secret for the
             # Grafana relying party at grafana.romaine.life. KV-managed via
             # the ExternalSecret in externalsecret.yaml; rotate by setting
-            # `grafana-oidc-client-secret` in romaine-kv and re-rolling
-            # both this pod and the Grafana pod (it holds the matching
-            # value as `grafana-oauth/client-secret`).
+            # `grafana-oidc-client-secret` in ng6-auth and re-rolling
+            # both this pod and the Grafana pod (Grafana's matching
+            # value lives in ng6-osms).
             - name: OIDC_GRAFANA_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

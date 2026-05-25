@@ -11,7 +11,7 @@ investing, house-hunt, and fzt-frontend.
 - **Hono** on Node 20 (Web Standards request/response, portable to Bun / edge if we want it)
 - **Better Auth** for the OAuth/OIDC flow, session storage, custom user fields, and JWT issuance
 - **Drizzle** (postgres-js driver) against a **CloudNativePG** Postgres cluster running in this app's namespace
-- All secrets injected via env: DB creds come from CNPG's auto-managed `auth-db-app` Secret; OAuth client secrets and `BETTER_AUTH_SECRET` arrive via an ExternalSecret synced from `romaine-kv`. The pod itself has no direct Azure dependencies
+- All secrets injected via env: DB creds come from CNPG's auto-managed `auth-db-app` Secret; OAuth client secrets and `BETTER_AUTH_SECRET` arrive via an ExternalSecret synced from the auth-owned `ng6-auth` Key Vault. The pod itself has no direct Azure dependencies
 
 ## Endpoints
 
@@ -335,8 +335,9 @@ ArgoCD syncs everything in [k8s/](k8s/) (Application manifest lives in
 3. CNPG manages the Postgres cluster lifecycle alongside
 
 Cluster credentials come from CNPG's auto-generated `auth-db-app` Secret;
-OAuth client secrets and `BETTER_AUTH_SECRET` come from `romaine-kv` via an
-ExternalSecret in [k8s/externalsecret.yaml](k8s/externalsecret.yaml).
+OAuth client secrets and `BETTER_AUTH_SECRET` come from the auth-owned
+`ng6-auth` Key Vault via an ExternalSecret in
+[k8s/externalsecret.yaml](k8s/externalsecret.yaml).
 
 ## Bootstrap dance
 

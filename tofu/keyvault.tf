@@ -29,14 +29,6 @@ resource "random_password" "better_auth_secret" {
   special = false
 }
 
-# Keep the legacy shared-vault copy until the chart cutover has applied and
-# External Secrets is reading from the app-owned vault.
-resource "azurerm_key_vault_secret" "better_auth_secret" {
-  name         = "auth-better-auth-secret"
-  value        = random_password.better_auth_secret.result
-  key_vault_id = data.azurerm_key_vault.shared.id
-}
-
 resource "azurerm_key_vault_secret" "better_auth_secret_app" {
   name         = "auth-better-auth-secret"
   value        = random_password.better_auth_secret.result
