@@ -4,6 +4,12 @@ variable "location" {
   default     = "westus2"
 }
 
+variable "key_vault_name" {
+  description = "Name of the Auth-owned Key Vault for app secrets."
+  type        = string
+  default     = "ng6-auth"
+}
+
 # OIDC issuer URL of the AKS cluster that hosts the auth workloads.
 # Stable per-cluster lifetime (changes only on cluster recreate). Lives
 # in a separate subscription from this stack's default, so a tofu data

@@ -4,8 +4,13 @@ output "resource_group_name" {
 }
 
 output "better_auth_secret_key_vault_id" {
+  value       = azurerm_key_vault_secret.better_auth_secret_app.id
+  description = "Auth-owned Key Vault secret ID for BETTER_AUTH_SECRET (sourced into k8s via ExternalSecret)"
+}
+
+output "legacy_better_auth_secret_key_vault_id" {
   value       = azurerm_key_vault_secret.better_auth_secret.id
-  description = "Key Vault secret ID for BETTER_AUTH_SECRET (sourced into k8s via ExternalSecret)"
+  description = "Legacy shared-vault secret ID for BETTER_AUTH_SECRET, kept until the auth ExternalSecret cutover is complete."
 }
 
 output "auth_db_backups_storage_account" {
