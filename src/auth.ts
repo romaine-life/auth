@@ -1,5 +1,5 @@
 import { betterAuth } from "better-auth";
-import { jwt } from "better-auth/plugins";
+import { jwt, oidcProvider } from "better-auth/plugins";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "./db/client.js";
 import { getManagedOrigins } from "./managed-origins.js";
@@ -175,6 +175,87 @@ export const auth = betterAuth({
           };
         },
       },
+    }),
+
+    // OAuth2/OIDC authorization-server surface for off-the-shelf relying
+    // parties that can't speak the romaine.life-native cookie/JWKS pattern.
+    // First consumer: Grafana at grafana.romaine.life. Future likely
+    // consumer: Argo CD UI. First-party romaine.life apps (homepage,
+    // workout, glimmung, tank-operator) keep using the shared session
+    // cookie + /api/auth/jwks — they don't go through these endpoints.
+    //
+    // Mounted under /api/auth/* alongside the rest of Better Auth, so the
+    // discovery doc is at /api/auth/.well-known/openid-configuration and
+    // the authorize/token/userinfo endpoints are at /api/auth/oauth2/*.
+    // RPs configure these URLs explicitly (Grafana doesn't autodiscover),
+    // so the non-root prefix doesn't matter.
+    //
+    // `useJWTPlugin: true` is the load-bearing flag: id_tokens are signed
+    // with the same RS256 key the JWT plugin manages, so an RP can verify
+    // id_tokens against /api/auth/jwks — identical to how an MCP server
+    // verifies a bot token. One JWKS, one trust root, both paths.
+    //
+    // `trustedClients` registers Grafana statically without a DB row.
+    // Adding a future RP is a 6-line append here + a KV secret + a deploy.
+    // We deliberately do NOT enable dynamic client registration — there is
+    // no scenario today where an unknown party should be able to mint
+    // itself an OAuth client against this provider.
+    //
+    // Note: this plugin is marked @deprecated upstream in favor of
+    // @better-auth/oauth-provider (not yet published for v1.6). Track the
+    // migration when 2.0 lands. Removal is gated on a major version bump
+    // so there is no urgency.
+    oidcProvider({
+      // Reuse the existing landing-page sign-in surface; an RP redirect
+      // that hits `prompt=login` lands the user here, the Microsoft/Google
+      // buttons sign them in, and the OIDC authorize flow resumes from the
+      // session cookie that gets set.
+      loginPage: "/",
+      useJWTPlugin: true,
+      requirePKCE: true,
+      allowPlainCodeChallengeMethod: false,
+      storeClientSecret: "hashed",
+      allowDynamicClientRegistration: false,
+      scopes: ["openid", "email", "profile"],
+      accessTokenExpiresIn: 3600,
+      refreshTokenExpiresIn: 60 * 60 * 24 * 7,
+      // Surface the platform `role` claim + the `apps` per-user prefs blob
+      // on the id_token and the /oauth2/userinfo response. Matches the JWT
+      // plugin's `definePayload` shape above so an RP's role-mapping
+      // expression is identical whether the JWT came from an OIDC login
+      // (browser path) or a bot/service token (API path). `role` is what
+      // Grafana's role_attribute_path reads to decide Admin vs Viewer.
+      getAdditionalUserInfoClaim: (user) => {
+        const u = user as typeof user & { role?: string; apps?: string };
+        let apps: Record<string, unknown> = {};
+        try {
+          apps = JSON.parse(u.apps ?? "{}");
+        } catch {
+          // Bad JSON in apps column shouldn't break the id_token; same
+          // defense as the JWT plugin's definePayload above.
+        }
+        return {
+          role: u.role ?? "user",
+          apps,
+        };
+      },
+      trustedClients: [
+        {
+          clientId: "grafana",
+          clientSecret: fromEnv("OIDC_GRAFANA_CLIENT_SECRET"),
+          name: "Grafana",
+          type: "web",
+          metadata: null,
+          disabled: false,
+          redirectUrls: ["https://grafana.romaine.life/login/generic_oauth"],
+          // First-party app; no consent screen on first login. The same
+          // user has already consented to using their romaine.life identity
+          // simply by signing into auth.romaine.life — bouncing them
+          // through a consent page for an internal tool is friction with
+          // no security value.
+          skipConsent: true,
+        },
+      ],
     }),
   ],
 });

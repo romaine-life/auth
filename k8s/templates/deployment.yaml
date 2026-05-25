@@ -66,6 +66,17 @@ spec:
                 secretKeyRef:
                   name: auth-oauth
                   key: BETTER_AUTH_SECRET
+            # OIDC provider plugin (src/auth.ts) — client_secret for the
+            # Grafana relying party at grafana.romaine.life. KV-managed via
+            # the ExternalSecret in externalsecret.yaml; rotate by setting
+            # `grafana-oidc-client-secret` in romaine-kv and re-rolling
+            # both this pod and the Grafana pod (it holds the matching
+            # value as `grafana-oauth/client-secret`).
+            - name: OIDC_GRAFANA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: OIDC_GRAFANA_CLIENT_SECRET
             # Glimmung-managed slot origin admin surface
             # (/api/admin/origins/*). Inbound auth: k8s SA tokens signed by
             # the cluster OIDC issuer below, with audience = this service.
