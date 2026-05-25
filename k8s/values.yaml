@@ -106,12 +106,16 @@ k8sOidc:
   #   `tank-operator-slot-N-sessions/tank-operator-slot-N-session`. They
   #   use the per-session `tank` consumer with slot-prefixed synthetic ids
   #   so slot-local session ids cannot collide with prod session ids.
+  # - Glimmung's orchestrator runs as `glimmung/infra-shared` and uses a
+  #   pod-stable service identity for lifecycle cleanup callbacks when no
+  #   human request token is present.
   serviceSaAllowlist: >-
     tank-operator-sessions/claude-session,
     mcp-k8s/mcp-k8s,
     mcp-argocd/mcp-argocd,
     mcp-azure-personal/mcp-azure-personal,
     hermes/hermes,
+    glimmung/infra-shared,
     tank-operator/tank-operator,
     tank-operator-slot-1/tank-operator-slot-1,
     tank-operator-slot-2/tank-operator-slot-2,

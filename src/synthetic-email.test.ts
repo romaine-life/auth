@@ -85,6 +85,10 @@ test("RESERVED_SERVICE_EMAIL_DOMAINS contains the tank-operator orchestrator con
   assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.tank-operator.romaine.life"));
 });
 
+test("RESERVED_SERVICE_EMAIL_DOMAINS contains the glimmung orchestrator consumer", () => {
+  assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.glimmung.romaine.life"));
+});
+
 test("RESERVED_SERVICE_EMAIL_DOMAINS keeps `tank` and `tank-operator` as distinct subdomains (leaked session JWT cannot be swapped for an orchestrator JWT)", () => {
   // Both must be present, and they must be distinct strings. Future
   // refactor that collapses them into one slug should delete this test
@@ -107,6 +111,13 @@ test("buildServiceEmail: mints under the hermes consumer (pod-stable singleton)"
   assert.strictEqual(
     buildServiceEmail("hermes", "hermes"),
     "pod-hermes@service.hermes.romaine.life",
+  );
+});
+
+test("buildServiceEmail: mints under the glimmung consumer (pod-stable singleton)", () => {
+  assert.strictEqual(
+    buildServiceEmail("glimmung", "glimmung"),
+    "pod-glimmung@service.glimmung.romaine.life",
   );
 });
 

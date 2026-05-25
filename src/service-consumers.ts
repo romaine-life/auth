@@ -67,6 +67,11 @@ const NAMESPACE_TO_CONSUMER: Record<string, ConsumerConfig> = {
     mode: "pod-stable",
     stableId: "hermes",
   },
+  glimmung: {
+    slug: "glimmung",
+    mode: "pod-stable",
+    stableId: "glimmung",
+  },
   "tank-operator": TANK_OPERATOR_ORCHESTRATOR,
 };
 
