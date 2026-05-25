@@ -53,6 +53,10 @@ export const RESERVED_SERVICE_EMAIL_DOMAINS: readonly string[] = [
   // orchestrator JWT can't be swapped at a verifier that pins on
   // domain. See nelsong6/tank-operator#540 follow-up.
   "service.tank-operator.romaine.life",
+  // Glimmung's long-lived orchestrator uses this service identity for
+  // cleanup callbacks into downstream apps when no human request token is
+  // still in scope (for example test-slot TTL/recovery cleanup).
+  "service.glimmung.romaine.life",
 ];
 
 /** Build the synthetic email for a service principal owned by `consumer`,

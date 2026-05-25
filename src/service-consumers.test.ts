@@ -20,6 +20,14 @@ test("consumerForNamespace maps tank test slots to elevated pod-stable consumers
   });
 });
 
+test("consumerForNamespace maps glimmung to pod-stable consumer", () => {
+  assert.deepStrictEqual(consumerForNamespace("glimmung"), {
+    slug: "glimmung",
+    mode: "pod-stable",
+    stableId: "glimmung",
+  });
+});
+
 test("consumerForNamespace maps tank test-slot sessions to per-session consumers", () => {
   assert.deepStrictEqual(consumerForNamespace("tank-operator-slot-5-sessions"), {
     slug: "tank",
