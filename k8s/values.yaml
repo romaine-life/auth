@@ -11,6 +11,12 @@ image:
   # quoted form for the same reason.
   tag: "f988d8e"
 
+externalSecret:
+  createStore: true
+  storeName: ng6-auth
+  storeKind: ClusterSecretStore
+  vaultUrl: https://ng6-auth.vault.azure.net
+
 # Wildcard cert + XListenerSet covering auth.dev.romaine.life AND
 # *.auth.dev.romaine.life. Provisioned once by the prod chart so
 # per-slot helm releases (k8s/issue/) can attach their HTTPRoutes to
