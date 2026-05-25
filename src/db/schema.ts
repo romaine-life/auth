@@ -91,6 +91,60 @@ export const cliDeviceGrant = pgTable(
   }),
 );
 
+// OIDC provider plugin: lets auth.romaine.life act as an OAuth2/OIDC
+// authorization server for off-the-shelf relying parties (today: Grafana
+// at grafana.romaine.life). Endpoints live under /api/auth/oauth2/* and
+// /api/auth/.well-known/openid-configuration. id_tokens are RS256-signed
+// by the JWT plugin's key (useJWTPlugin: true in auth.ts), so RPs verify
+// against the same /api/auth/jwks the rest of romaine.life uses.
+//
+// First-party romaine.life apps (homepage, workout, glimmung, etc.)
+// continue to use the shared `.romaine.life` session cookie + JWKS
+// verification — they don't go through these tables. Only standards-only
+// consumers (Grafana, future Argo CD UI) touch the OIDC surface.
+//
+// Trusted clients are configured in-memory via the plugin's
+// `trustedClients` option in auth.ts; for them the `oauth_application`
+// table is unused. The table is kept for the plugin's runtime DB queries
+// and for any future dynamic-registration consumer.
+export const oauthApplication = pgTable("oauth_application", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  icon: text("icon"),
+  metadata: text("metadata"),
+  clientId: text("client_id").notNull().unique(),
+  clientSecret: text("client_secret"),
+  redirectUrls: text("redirect_urls").notNull(),
+  type: text("type").notNull(),
+  disabled: boolean("disabled").notNull().default(false),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const oauthAccessToken = pgTable("oauth_access_token", {
+  id: text("id").primaryKey(),
+  accessToken: text("access_token").notNull().unique(),
+  refreshToken: text("refresh_token").notNull().unique(),
+  accessTokenExpiresAt: timestamp("access_token_expires_at").notNull(),
+  refreshTokenExpiresAt: timestamp("refresh_token_expires_at").notNull(),
+  clientId: text("client_id").notNull(),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  scopes: text("scopes").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const oauthConsent = pgTable("oauth_consent", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id").notNull(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  scopes: text("scopes").notNull(),
+  consentGiven: boolean("consent_given").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // JWT plugin: stores the RSA keypair used to sign JWTs. JWKS at
 // /api/auth/jwks serves the public key; apps verify against that URL.
 // Field names match the plugin's expected JS property names (publicKey,
