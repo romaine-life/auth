@@ -8,11 +8,6 @@ output "better_auth_secret_key_vault_id" {
   description = "Auth-owned Key Vault secret ID for BETTER_AUTH_SECRET (sourced into k8s via ExternalSecret)"
 }
 
-output "legacy_better_auth_secret_key_vault_id" {
-  value       = azurerm_key_vault_secret.better_auth_secret.id
-  description = "Legacy shared-vault secret ID for BETTER_AUTH_SECRET, kept until the auth ExternalSecret cutover is complete."
-}
-
 output "auth_db_backups_storage_account" {
   value       = azurerm_storage_account.auth_db_backups.name
   description = "Storage account holding auth-db CNPG backups. Drives the destinationPath in cluster.yaml."
