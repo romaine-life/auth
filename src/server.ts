@@ -2751,6 +2751,35 @@ function testSignIn(c: Context, callbackURL: string) {
   return c.redirect(callbackURL);
 }
 
+async function trustedCallbackURL(callbackURL: string | undefined, fallback: string): Promise<string> {
+  if (!callbackURL) return fallback;
+  if (callbackURL.startsWith("/") && !callbackURL.startsWith("//")) return callbackURL;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(callbackURL);
+  } catch {
+    return fallback;
+  }
+
+  for (const pattern of await resolveAllTrustedOrigins()) {
+    if (matchWildcard(pattern, parsed.origin)) return parsed.toString();
+  }
+  return fallback;
+}
+
+async function signOutCallbackURL(c: Context): Promise<string> {
+  let callbackURL = c.req.query("callbackURL");
+  try {
+    const body = await c.req.parseBody();
+    const fromBody = body.callbackURL;
+    if (typeof fromBody === "string") callbackURL = fromBody;
+  } catch {
+    // Sign-out still works without a callback body.
+  }
+  return trustedCallbackURL(callbackURL, "/");
+}
+
 app.post("/sign-in/microsoft", (c) =>
   TEST_MODE ? testSignIn(c, "/") : socialSignInRedirect(c, "microsoft", "/"));
 app.get("/sign-in/microsoft", (c) => {
@@ -2765,21 +2794,22 @@ app.get("/sign-in/google", (c) => {
 });
 
 app.post("/sign-out", async (c) => {
+  const callbackURL = await signOutCallbackURL(c);
   if (TEST_MODE) {
     clearTestCookie(c);
-    return c.redirect("/");
+    return c.redirect(callbackURL);
   }
   try {
     const authRes = await auth.api.signOut({
       headers: c.req.raw.headers,
       asResponse: true,
     });
-    const redirect = new Response(null, { status: 302, headers: { Location: "/" } });
+    const redirect = new Response(null, { status: 302, headers: { Location: callbackURL } });
     copySetCookies(authRes, redirect);
     return redirect;
   } catch (err) {
     console.error("[sign-out] threw:", err);
-    return c.redirect("/");
+    return c.redirect(callbackURL);
   }
 });
 
