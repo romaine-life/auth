@@ -2703,6 +2703,185 @@ app.post("/api/cli/token", async (c) => {
   return oauthError(c, "unsupported_grant_type");
 });
 
+// ── User-token CLI flow (native desktop apps) ──────────────────────────────
+//
+// Companion to /api/cli/device above. The bot-token flow exists so an admin
+// can approve an unattended request and hand a `role=admin, purpose=bot`
+// JWT to a CLI/agent. This flow exists so the user signs in to the browser
+// the normal way (Microsoft/Google), and a native desktop app on the same
+// machine gets the user's own JWT delivered to a loopback listener.
+//
+// No approval ceremony — the user *is* the requester, so there's nothing
+// to gate beyond the sign-in itself. No `where_happening`/`intended_use`
+// metadata — that's a bot-mint concept; for a personal app it's noise.
+//
+// Flow (RFC 8252 — OAuth 2.0 for Native Apps):
+//   1. Desktop opens listener at 127.0.0.1:<ephemeral>/callback
+//   2. Desktop opens browser at /api/auth/cli/user-login with
+//      redirect_uri, state, code_challenge, code_challenge_method=S256
+//   3. If no session → bounce through /sign-in/microsoft, return here
+//      after sign-in. If session → mint one-time code, redirect browser
+//      to redirect_uri?code=...&state=...
+//   4. Desktop POSTs to /api/auth/cli/user-token with code + code_verifier
+//      + redirect_uri. JWT comes back in the POST response — never travels
+//      through the browser, never lands in browser history.
+//
+// In-memory grant store. k8s/templates/deployment.yaml pins replicas: 1,
+// so a single Map is the source of truth; a pod restart drops in-flight
+// grants but the user just clicks sign-in again. 5-minute code TTL.
+
+const USER_LOGIN_CODE_TTL_SECONDS = 5 * 60;
+const USER_LOGIN_TOKEN_TTL_SECONDS = 24 * 60 * 60;
+
+interface UserLoginGrant {
+  userId: string;
+  redirectUri: string;
+  codeChallenge: string;
+  state: string | null;
+  expiresAt: number;
+}
+
+const userLoginGrants = new Map<string, UserLoginGrant>();
+
+function pruneExpiredUserLoginGrants(now = Date.now()) {
+  for (const [k, g] of userLoginGrants) {
+    if (g.expiresAt <= now) userLoginGrants.delete(k);
+  }
+}
+
+app.get("/api/auth/cli/user-login", async (c) => {
+  if (TEST_MODE) return c.text("user-login flow unavailable in test mode", 404);
+
+  let redirectUri: string;
+  let codeChallenge: string;
+  let state: string | null;
+  try {
+    const validated = validateLoopbackRedirectUri(c.req.query("redirect_uri"));
+    if (!validated) throw new Error("redirect_uri is required");
+    redirectUri = validated;
+    const pkce = validatePkceInput(
+      redirectUri,
+      c.req.query("code_challenge"),
+      c.req.query("code_challenge_method"),
+    );
+    if (!pkce.codeChallenge) throw new Error("code_challenge is required");
+    codeChallenge = pkce.codeChallenge;
+    state = (c.req.query("state") ?? "").slice(0, 500) || null;
+  } catch (e) {
+    return c.text((e as Error).message, 400);
+  }
+
+  // If not signed in, bounce through Microsoft sign-in and come back here
+  // with the same params so the signed-in branch fires on the next pass.
+  // Google works too — Microsoft is the default to match the dashboard.
+  const sessionResult = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!sessionResult) {
+    const self = new URL("/api/auth/cli/user-login", publicBaseUrl(c));
+    self.searchParams.set("redirect_uri", redirectUri);
+    self.searchParams.set("code_challenge", codeChallenge);
+    self.searchParams.set("code_challenge_method", "S256");
+    if (state) self.searchParams.set("state", state);
+    return c.redirect(`/sign-in/microsoft?callbackURL=${encodeURIComponent(self.toString())}`);
+  }
+
+  // Refuse role=pending — downstream apps reject pending users anyway, so
+  // a token issued here would just fail at the next API call.
+  const u = sessionResult.user as typeof sessionResult.user & { role?: string };
+  if (u.role !== "admin" && u.role !== "user") {
+    return c.text(
+      "Your romaine.life account is pending admin approval. Try again after an admin promotes you.",
+      403,
+    );
+  }
+
+  pruneExpiredUserLoginGrants();
+  const code = randomUrlToken();
+  userLoginGrants.set(hashSecret(code), {
+    userId: u.id,
+    redirectUri,
+    codeChallenge,
+    state,
+    expiresAt: Date.now() + USER_LOGIN_CODE_TTL_SECONDS * 1000,
+  });
+
+  return c.redirect(appendCallbackParams(redirectUri, code, state));
+});
+
+app.post("/api/auth/cli/user-token", async (c) => {
+  if (TEST_MODE) return c.json({ error: "user-login flow unavailable in test mode" }, 404);
+
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonObject(c);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+
+  if (body.grant_type !== "authorization_code") {
+    return oauthError(c, "unsupported_grant_type");
+  }
+  if (typeof body.code !== "string" || !body.code) {
+    return oauthError(c, "invalid_request", 400, { error_description: "code is required" });
+  }
+  if (typeof body.code_verifier !== "string" || !body.code_verifier) {
+    return oauthError(c, "invalid_request", 400, { error_description: "code_verifier is required" });
+  }
+  if (typeof body.redirect_uri !== "string" || !body.redirect_uri) {
+    return oauthError(c, "invalid_request", 400, { error_description: "redirect_uri is required" });
+  }
+
+  pruneExpiredUserLoginGrants();
+  const codeHash = hashSecret(body.code);
+  const grant = userLoginGrants.get(codeHash);
+  if (!grant) return oauthError(c, "invalid_grant");
+  // Single-use: drop the grant immediately so a leaked code can't be replayed.
+  userLoginGrants.delete(codeHash);
+
+  if (grant.expiresAt <= Date.now()) return oauthError(c, "expired_token");
+  if (grant.redirectUri !== body.redirect_uri) {
+    return oauthError(c, "invalid_grant", 400, { error_description: "redirect_uri mismatch" });
+  }
+  if (!verifyPkceS256(body.code_verifier, grant.codeChallenge)) {
+    return oauthError(c, "invalid_grant", 400, { error_description: "PKCE verification failed" });
+  }
+
+  // Re-read the user row at mint time — a role change between code
+  // issuance and exchange (admin demoting someone mid-flow) should be
+  // reflected in what we issue.
+  const rows = await db.select().from(user).where(eq(user.id, grant.userId)).limit(1);
+  const u = rows[0];
+  if (!u) return oauthError(c, "invalid_grant", 400, { error_description: "user no longer exists" });
+  if (u.role !== "admin" && u.role !== "user") {
+    return oauthError(c, "access_denied", 403, { error_description: "account is not approved" });
+  }
+
+  let apps: Record<string, unknown> = {};
+  try { apps = JSON.parse(u.apps ?? "{}"); } catch {}
+
+  try {
+    const signed = await mintAuthJwt({
+      sub: u.id,
+      email: u.email,
+      name: u.name,
+      role: u.role,
+      apps,
+      ttlSeconds: USER_LOGIN_TOKEN_TTL_SECONDS,
+    });
+    console.warn(
+      "[/api/auth/cli/user-token] minted:",
+      JSON.stringify({ email: u.email, role: u.role, exp: signed.exp }),
+    );
+    return c.json({
+      token: signed.token,
+      expires_at: signed.exp,
+      expires_in_hours: USER_LOGIN_TOKEN_TTL_SECONDS / 3600,
+    });
+  } catch (e) {
+    console.error("[/api/auth/cli/user-token] mint failed:", e);
+    return c.json({ error: "failed to mint token" }, 500);
+  }
+});
+
 // Better Auth's `asResponse: true` returns a full Response object including
 // any Set-Cookie headers the call wants to set (e.g. the PKCE/state cookie
 // for sign-in, the session-clear cookie for sign-out). We copy those across
