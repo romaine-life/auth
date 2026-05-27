@@ -267,6 +267,145 @@ if (process.env.TEST_MODE !== "true") {
     }
   });
 
+  // ── User-token CLI flow routes ───────────────────────────────────────────
+  // Registered HERE (inside the TEST_MODE-false block) so they land before
+  // the `app.on(["GET", "POST"], "/api/auth/*", auth.handler)` catch-all
+  // a few dozen lines below. Hono is first-match-wins; a /api/auth/cli/*
+  // path registered after the catch-all would be silently shadowed and
+  // return 404. The grant store + helpers above live at module scope;
+  // only the registrations need to be in this block.
+  //
+  // See the block-level docs near `userLoginGrants` for the flow.
+
+  app.get("/api/auth/cli/user-login", async (c) => {
+    let redirectUri: string;
+    let codeChallenge: string;
+    let state: string | null;
+    try {
+      const validated = validateLoopbackRedirectUri(c.req.query("redirect_uri"));
+      if (!validated) throw new Error("redirect_uri is required");
+      redirectUri = validated;
+      const pkce = validatePkceInput(
+        redirectUri,
+        c.req.query("code_challenge"),
+        c.req.query("code_challenge_method"),
+      );
+      if (!pkce.codeChallenge) throw new Error("code_challenge is required");
+      codeChallenge = pkce.codeChallenge;
+      state = (c.req.query("state") ?? "").slice(0, 500) || null;
+    } catch (e) {
+      return c.text((e as Error).message, 400);
+    }
+
+    // If not signed in, bounce through Microsoft sign-in and come back here
+    // with the same params so the signed-in branch fires on the next pass.
+    // Google works too — Microsoft is the default to match the dashboard.
+    const sessionResult = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!sessionResult) {
+      const self = new URL("/api/auth/cli/user-login", publicBaseUrl(c));
+      self.searchParams.set("redirect_uri", redirectUri);
+      self.searchParams.set("code_challenge", codeChallenge);
+      self.searchParams.set("code_challenge_method", "S256");
+      if (state) self.searchParams.set("state", state);
+      return c.redirect(`/sign-in/microsoft?callbackURL=${encodeURIComponent(self.toString())}`);
+    }
+
+    // Refuse role=pending — downstream apps reject pending users anyway, so
+    // a token issued here would just fail at the next API call.
+    const u = sessionResult.user as typeof sessionResult.user & { role?: string };
+    if (u.role !== "admin" && u.role !== "user") {
+      return c.text(
+        "Your romaine.life account is pending admin approval. Try again after an admin promotes you.",
+        403,
+      );
+    }
+
+    pruneExpiredUserLoginGrants();
+    const code = randomUrlToken();
+    userLoginGrants.set(hashSecret(code), {
+      userId: u.id,
+      redirectUri,
+      codeChallenge,
+      state,
+      expiresAt: Date.now() + USER_LOGIN_CODE_TTL_SECONDS * 1000,
+    });
+
+    return c.redirect(appendCallbackParams(redirectUri, code, state));
+  });
+
+  app.post("/api/auth/cli/user-token", async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonObject(c);
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400);
+    }
+
+    if (body.grant_type !== "authorization_code") {
+      return oauthError(c, "unsupported_grant_type");
+    }
+    if (typeof body.code !== "string" || !body.code) {
+      return oauthError(c, "invalid_request", 400, { error_description: "code is required" });
+    }
+    if (typeof body.code_verifier !== "string" || !body.code_verifier) {
+      return oauthError(c, "invalid_request", 400, { error_description: "code_verifier is required" });
+    }
+    if (typeof body.redirect_uri !== "string" || !body.redirect_uri) {
+      return oauthError(c, "invalid_request", 400, { error_description: "redirect_uri is required" });
+    }
+
+    pruneExpiredUserLoginGrants();
+    const codeHash = hashSecret(body.code);
+    const grant = userLoginGrants.get(codeHash);
+    if (!grant) return oauthError(c, "invalid_grant");
+    // Single-use: drop the grant immediately so a leaked code can't be replayed.
+    userLoginGrants.delete(codeHash);
+
+    if (grant.expiresAt <= Date.now()) return oauthError(c, "expired_token");
+    if (grant.redirectUri !== body.redirect_uri) {
+      return oauthError(c, "invalid_grant", 400, { error_description: "redirect_uri mismatch" });
+    }
+    if (!verifyPkceS256(body.code_verifier, grant.codeChallenge)) {
+      return oauthError(c, "invalid_grant", 400, { error_description: "PKCE verification failed" });
+    }
+
+    // Re-read the user row at mint time — a role change between code
+    // issuance and exchange (admin demoting someone mid-flow) should be
+    // reflected in what we issue.
+    const rows = await db.select().from(user).where(eq(user.id, grant.userId)).limit(1);
+    const u = rows[0];
+    if (!u) return oauthError(c, "invalid_grant", 400, { error_description: "user no longer exists" });
+    if (u.role !== "admin" && u.role !== "user") {
+      return oauthError(c, "access_denied", 403, { error_description: "account is not approved" });
+    }
+
+    let apps: Record<string, unknown> = {};
+    try { apps = JSON.parse(u.apps ?? "{}"); } catch {}
+
+    try {
+      const signed = await mintAuthJwt({
+        sub: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        apps,
+        ttlSeconds: USER_LOGIN_TOKEN_TTL_SECONDS,
+      });
+      console.warn(
+        "[/api/auth/cli/user-token] minted:",
+        JSON.stringify({ email: u.email, role: u.role, exp: signed.exp }),
+      );
+      return c.json({
+        token: signed.token,
+        expires_at: signed.exp,
+        expires_in_hours: USER_LOGIN_TOKEN_TTL_SECONDS / 3600,
+      });
+    } catch (e) {
+      console.error("[/api/auth/cli/user-token] mint failed:", e);
+      return c.json({ error: "failed to mint token" }, 500);
+    }
+  });
+
 }
 
 // TEST_MODE flips every handler into fixture-data mode. Used by helm-issue
@@ -2748,139 +2887,6 @@ function pruneExpiredUserLoginGrants(now = Date.now()) {
     if (g.expiresAt <= now) userLoginGrants.delete(k);
   }
 }
-
-app.get("/api/auth/cli/user-login", async (c) => {
-  if (TEST_MODE) return c.text("user-login flow unavailable in test mode", 404);
-
-  let redirectUri: string;
-  let codeChallenge: string;
-  let state: string | null;
-  try {
-    const validated = validateLoopbackRedirectUri(c.req.query("redirect_uri"));
-    if (!validated) throw new Error("redirect_uri is required");
-    redirectUri = validated;
-    const pkce = validatePkceInput(
-      redirectUri,
-      c.req.query("code_challenge"),
-      c.req.query("code_challenge_method"),
-    );
-    if (!pkce.codeChallenge) throw new Error("code_challenge is required");
-    codeChallenge = pkce.codeChallenge;
-    state = (c.req.query("state") ?? "").slice(0, 500) || null;
-  } catch (e) {
-    return c.text((e as Error).message, 400);
-  }
-
-  // If not signed in, bounce through Microsoft sign-in and come back here
-  // with the same params so the signed-in branch fires on the next pass.
-  // Google works too — Microsoft is the default to match the dashboard.
-  const sessionResult = await auth.api.getSession({ headers: c.req.raw.headers });
-  if (!sessionResult) {
-    const self = new URL("/api/auth/cli/user-login", publicBaseUrl(c));
-    self.searchParams.set("redirect_uri", redirectUri);
-    self.searchParams.set("code_challenge", codeChallenge);
-    self.searchParams.set("code_challenge_method", "S256");
-    if (state) self.searchParams.set("state", state);
-    return c.redirect(`/sign-in/microsoft?callbackURL=${encodeURIComponent(self.toString())}`);
-  }
-
-  // Refuse role=pending — downstream apps reject pending users anyway, so
-  // a token issued here would just fail at the next API call.
-  const u = sessionResult.user as typeof sessionResult.user & { role?: string };
-  if (u.role !== "admin" && u.role !== "user") {
-    return c.text(
-      "Your romaine.life account is pending admin approval. Try again after an admin promotes you.",
-      403,
-    );
-  }
-
-  pruneExpiredUserLoginGrants();
-  const code = randomUrlToken();
-  userLoginGrants.set(hashSecret(code), {
-    userId: u.id,
-    redirectUri,
-    codeChallenge,
-    state,
-    expiresAt: Date.now() + USER_LOGIN_CODE_TTL_SECONDS * 1000,
-  });
-
-  return c.redirect(appendCallbackParams(redirectUri, code, state));
-});
-
-app.post("/api/auth/cli/user-token", async (c) => {
-  if (TEST_MODE) return c.json({ error: "user-login flow unavailable in test mode" }, 404);
-
-  let body: Record<string, unknown>;
-  try {
-    body = await readJsonObject(c);
-  } catch (e) {
-    return c.json({ error: (e as Error).message }, 400);
-  }
-
-  if (body.grant_type !== "authorization_code") {
-    return oauthError(c, "unsupported_grant_type");
-  }
-  if (typeof body.code !== "string" || !body.code) {
-    return oauthError(c, "invalid_request", 400, { error_description: "code is required" });
-  }
-  if (typeof body.code_verifier !== "string" || !body.code_verifier) {
-    return oauthError(c, "invalid_request", 400, { error_description: "code_verifier is required" });
-  }
-  if (typeof body.redirect_uri !== "string" || !body.redirect_uri) {
-    return oauthError(c, "invalid_request", 400, { error_description: "redirect_uri is required" });
-  }
-
-  pruneExpiredUserLoginGrants();
-  const codeHash = hashSecret(body.code);
-  const grant = userLoginGrants.get(codeHash);
-  if (!grant) return oauthError(c, "invalid_grant");
-  // Single-use: drop the grant immediately so a leaked code can't be replayed.
-  userLoginGrants.delete(codeHash);
-
-  if (grant.expiresAt <= Date.now()) return oauthError(c, "expired_token");
-  if (grant.redirectUri !== body.redirect_uri) {
-    return oauthError(c, "invalid_grant", 400, { error_description: "redirect_uri mismatch" });
-  }
-  if (!verifyPkceS256(body.code_verifier, grant.codeChallenge)) {
-    return oauthError(c, "invalid_grant", 400, { error_description: "PKCE verification failed" });
-  }
-
-  // Re-read the user row at mint time — a role change between code
-  // issuance and exchange (admin demoting someone mid-flow) should be
-  // reflected in what we issue.
-  const rows = await db.select().from(user).where(eq(user.id, grant.userId)).limit(1);
-  const u = rows[0];
-  if (!u) return oauthError(c, "invalid_grant", 400, { error_description: "user no longer exists" });
-  if (u.role !== "admin" && u.role !== "user") {
-    return oauthError(c, "access_denied", 403, { error_description: "account is not approved" });
-  }
-
-  let apps: Record<string, unknown> = {};
-  try { apps = JSON.parse(u.apps ?? "{}"); } catch {}
-
-  try {
-    const signed = await mintAuthJwt({
-      sub: u.id,
-      email: u.email,
-      name: u.name,
-      role: u.role,
-      apps,
-      ttlSeconds: USER_LOGIN_TOKEN_TTL_SECONDS,
-    });
-    console.warn(
-      "[/api/auth/cli/user-token] minted:",
-      JSON.stringify({ email: u.email, role: u.role, exp: signed.exp }),
-    );
-    return c.json({
-      token: signed.token,
-      expires_at: signed.exp,
-      expires_in_hours: USER_LOGIN_TOKEN_TTL_SECONDS / 3600,
-    });
-  } catch (e) {
-    console.error("[/api/auth/cli/user-token] mint failed:", e);
-    return c.json({ error: "failed to mint token" }, 500);
-  }
-});
 
 // Better Auth's `asResponse: true` returns a full Response object including
 // any Set-Cookie headers the call wants to set (e.g. the PKCE/state cookie
