@@ -26,6 +26,7 @@ investing, house-hunt, and fzt-frontend.
 - `POST /admin/bot-tokens` — admin-only: mint a 24h bot token (`role=admin`, `purpose=bot`) for break-glass CLI / curl use
 - `POST /admin/service-tokens` — admin-only: mint a 24h service token (`role=service`, `purpose=bot`, `actor_email=<admin>`) for calling service-only MCPs (e.g. `mcp-github`) from a workstation
 - `POST /api/cli/device` + `POST /api/cli/token` — browser-approved CLI/device flow for minting the same 24h bot token without copying an auth cookie
+- `GET /api/auth/cli/user-login` + `POST /api/auth/cli/user-token` — native-desktop sign-in flow (RFC 8252, PKCE + loopback). The user signs in normally with Microsoft/Google in the browser; a native app on the same machine receives the user's own JWT (`role=user|admin`, no `purpose=bot`) via a one-time code redeemed at the token endpoint. No admin approval — the user IS the requester. First consumer: `nelsong6/shows`'s `desktop/`.
 - `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
