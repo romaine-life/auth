@@ -23,11 +23,14 @@ investing, house-hunt, and fzt-frontend.
 - `PUT  /api/admin/origins/{project}` — replace a project's slot wildcards (k8s-SA-auth, idempotent)
 - `DELETE /api/admin/origins/{project}` — drop a project's slot wildcards (k8s-SA-auth)
 - `POST /api/auth/exchange/k8s` — exchange a session-pod's projected SA token for an auth.romaine.life `role=service` JWT
+- `POST /api/auth/exchange/federation` — exchange a workload's projected SA token for an external-audience JWT (RFC 7523 client_assertion; today: Tailscale). Distinct allowlist + output shape from the `/k8s` path
+- `POST /api/auth/exchange/ssh-cert` — exchange an issuance gateway's projected SA token for a short-lived OpenSSH **user certificate** (auth owns the SSH CA key). Distinct signing key class (ed25519 SSH CA, not the JWKS key), distinct allowlist (`K8S_SSH_CERT_SA_ALLOWLIST`). See "SSH certificate issuance" below
+- `GET  /api/ssh/ca` — the SSH CA **public** key as a `TrustedUserCAKeys` line (unauthenticated; a CA public key is published-by-design). 404 when the CA is unconfigured
 - `POST /admin/bot-tokens` — admin-only: mint a 24h bot token (`role=admin`, `purpose=bot`) for break-glass CLI / curl use
 - `POST /admin/service-tokens` — admin-only: mint a 24h service token (`role=service`, `purpose=bot`, `actor_email=<admin>`) for calling service-only MCPs (e.g. `mcp-github`) from a workstation
 - `POST /api/cli/device` + `POST /api/cli/token` — browser-approved CLI/device flow for minting the same 24h bot token without copying an auth cookie
 - `GET /api/auth/cli/user-login` + `POST /api/auth/cli/user-token` — native-desktop sign-in flow (RFC 8252, PKCE + loopback). The user signs in normally with Microsoft/Google in the browser; a native app on the same machine receives the user's own JWT (`role=user|admin`, no `purpose=bot`) via a one-time code redeemed at the token endpoint. No admin approval — the user IS the requester. First consumer: `nelsong6/shows`'s `desktop/`.
-- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
+- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, `auth_federation_exchange_total{result}`, `auth_ssh_cert_exchange_total{result}`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
 
@@ -85,6 +88,60 @@ the human owner so downstream services can audit and scope per-owner.
 
 See [nelsong6/tank-operator#486](https://github.com/nelsong6/tank-operator/issues/486)
 for the cross-repo architecture and rollout plan.
+
+## SSH certificate issuance
+
+auth owns the SSH certificate authority for romaine.life-managed remote-host
+execution. It holds the **only** SSH CA private key and is the **only** issuer
+of OpenSSH user certificates. This replaces glimmung's retired local signer
+(`glimmung/internal/server/ssh_ca.go` + the `glimmung-ssh-ca-private-key` KV
+secret + `GLIMMUNG_SSH_CA_PRIVATE_KEY` env, all deleted in the glimmung-side
+PR of this migration). The trust root for SSH on a managed host is now the
+identity provider, not the workflow orchestrator.
+
+Flow: a per-run issuance gateway (today: glimmung's native-runner ssh-cert
+callback, which validates the run token and derives the run-scoped `key_id`
+`glimmung-run:<project>/<run_id>` and principal `<project>-agent`) presents
+its projected k8s SA token plus a freshly minted ed25519 public key to
+`POST /api/auth/exchange/ssh-cert`. auth validates and **clamps every
+security-relevant field server-side** before the CA key signs anything:
+
+- principals must match `SSH_CERT_PRINCIPAL_PATTERN` (default
+  `^[a-z0-9][a-z0-9-]{0,62}-agent$` — a caller cannot request `root` or an
+  arbitrary login), capped at 4;
+- extensions are restricted to `permit-pty` (no port/agent/X11 forwarding, no
+  user-rc); critical options are never honored from the caller;
+- TTL is bounded `[60s, 1h]` (default 10m) and **rejected, never silently
+  clamped**, when out of range;
+- the public key must be `ssh-ed25519` and must not itself be a certificate.
+
+Inbound bearer is the gateway's projected SA token (RS256, audience pinned to
+`https://auth.romaine.life` per `K8S_SSH_CERT_AUDIENCE`, namespace+SA pinned
+per `K8S_SSH_CERT_SA_ALLOWLIST`). That allowlist is deliberately **narrower**
+than the service/federation allowlists — minting a host login credential is a
+higher-trust action than minting a service or federation JWT — so only the
+issuance gateway (`glimmung/infra-shared`) lands there.
+
+The signing primitive (`src/ssh-cert.ts`) is a hand-rolled OpenSSH
+`PROTOCOL.certkeys` encoder over Node's stdlib ed25519 `crypto.sign` — no
+third-party SSH crypto dependency enters the identity provider's trust
+boundary. The contract test (`src/ssh-cert.test.ts`) proves the cert decodes
+to the requested structure, the signature verifies under the CA public key,
+and (in CI, with openssh-client installed) that real `ssh-keygen -L` parses it
+and reports the same principal / key id / validity / extension.
+
+The CA **private** key is the `auth-ssh-ca-private-key` KV secret (PKCS#8 PEM
+ed25519), synced into env `SSH_CA_PRIVATE_KEY` via the ExternalSecret. An unset
+key fails issuance closed (503) and returns 404 from `GET /api/ssh/ca` rather
+than serving an empty trust anchor. The CA **public** key is served at
+`GET /api/ssh/ca` for hosts to populate `TrustedUserCAKeys`. See
+`k8s/values.yaml` (`k8sOidc.sshCert*`) for the one-time key-provisioning steps.
+
+`auth_ssh_cert_exchange_total{result}` counts issuances by outcome; per-mint
+identity (subject, key id, principals, expiry) is in a structured
+`[ssh-cert] issued` audit log line, not a metric label (cardinality
+discipline). A sustained `error_ca_unconfigured` means issuance is down even
+while sign-in and the JWT exchanges are healthy.
 
 ## Admin bot tokens (break-glass CLI auth)
 

@@ -43,6 +43,11 @@ import {
   exchangeFederationToken,
   FederationExchangeError,
 } from "./federation-exchange.js";
+import {
+  exchangeSshCert,
+  SshCertExchangeError,
+  sshCaPublicKey,
+} from "./ssh-cert-exchange.js";
 import { mintAuthJwt } from "./mint-jwt.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
 import {
@@ -51,6 +56,7 @@ import {
   recordAdminServiceTokenMint,
   recordExchange,
   recordFederationExchange,
+  recordSshCertExchange,
   registry,
 } from "./metrics.js";
 
@@ -336,6 +342,101 @@ if (process.env.TEST_MODE !== "true") {
       recordFederationExchange("error_internal");
       return c.json({ error: "internal error", reason: "error_internal" }, 500);
     }
+  });
+
+  // ── SSH user-certificate exchange ────────────────────────────────────────
+  // auth owns the SSH CA key and signs short-lived OpenSSH user certs here.
+  // Inbound: a per-run issuance gateway (today: glimmung's native-runner
+  // ssh-cert callback) presents its projected k8s SA token plus a freshly
+  // minted ed25519 public key and the run-scoped cert parameters; auth
+  // validates/clamps every security-relevant field and signs.
+  //
+  // Structurally separate from /api/auth/exchange/federation: different
+  // signing KEY CLASS (SSH CA ed25519, not the JWKS key), different inbound
+  // allowlist (K8S_SSH_CERT_SA_ALLOWLIST), different output (a host login
+  // credential, not a bearer JWT). See src/ssh-cert-exchange.ts header.
+  //
+  // Body: { public_key, key_id, principals[], extensions?[], ttl_seconds? }.
+  app.post("/api/auth/exchange/ssh-cert", async (c) => {
+    const header = c.req.header("Authorization");
+    if (!header || !header.startsWith("Bearer ")) {
+      recordSshCertExchange("denied_token");
+      return c.json({ error: "missing bearer token", reason: "denied_token" }, 401);
+    }
+    const saToken = header.slice("Bearer ".length).trim();
+
+    let body: {
+      public_key?: unknown;
+      key_id?: unknown;
+      principals?: unknown;
+      extensions?: unknown;
+      ttl_seconds?: unknown;
+    };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      recordSshCertExchange("denied_public_key");
+      return c.json(
+        { error: "request body must be JSON", reason: "denied_public_key" },
+        400,
+      );
+    }
+
+    try {
+      const result = await exchangeSshCert({
+        saToken,
+        publicKey: body.public_key,
+        keyId: body.key_id,
+        principals: body.principals,
+        extensions: body.extensions,
+        ttlSeconds: body.ttl_seconds,
+      });
+      recordSshCertExchange("success");
+      // Structured audit line. Per-mint identity lives here, NOT in a
+      // metric label (cardinality discipline). The cert body itself is a
+      // bearer credential and is never logged.
+      console.warn(
+        "[ssh-cert] issued",
+        JSON.stringify({
+          sub: result.subject,
+          key_id: result.keyId,
+          principals: result.principals,
+          valid_before: result.validBefore,
+        }),
+      );
+      return c.json({
+        certificate: result.certificate,
+        valid_before: result.validBefore,
+        sub: result.subject,
+        key_id: result.keyId,
+        principals: result.principals,
+      });
+    } catch (e) {
+      if (e instanceof SshCertExchangeError) {
+        recordSshCertExchange(e.reason);
+        return c.json(
+          { error: e.message, reason: e.reason },
+          e.status as Parameters<typeof c.json>[1],
+        );
+      }
+      console.error("[/api/auth/exchange/ssh-cert] unexpected:", e);
+      recordSshCertExchange("error_internal");
+      return c.json({ error: "internal error", reason: "error_internal" }, 500);
+    }
+  });
+
+  // ── SSH CA public key (unauthenticated) ──────────────────────────────────
+  // A CA public key is published-by-design: a host populates its
+  // TrustedUserCAKeys from it. Served as text/plain so host provisioning
+  // can `curl https://auth.romaine.life/api/ssh/ca >> trusted-ca.pub`.
+  // 404 when the CA is unconfigured (env SSH_CA_PRIVATE_KEY unset) so a
+  // misconfigured deploy is loud rather than serving an empty trust anchor.
+  app.get("/api/ssh/ca", (c) => {
+    const pub = sshCaPublicKey();
+    if (!pub) {
+      return c.text("SSH CA not configured", 404);
+    }
+    return c.text(pub + "\n", 200, { "content-type": "text/plain; charset=utf-8" });
   });
 
   // ── User-token CLI flow routes ───────────────────────────────────────────
