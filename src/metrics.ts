@@ -105,3 +105,32 @@ export const authAdminServiceTokensMintedTotal = new Counter({
 export function recordAdminServiceTokenMint(): void {
   authAdminServiceTokensMintedTotal.inc();
 }
+
+// External-audience federation exchange (/api/auth/exchange/federation).
+// Same shape as the service-exchange counter — bounded label set drawn
+// from FederationFailureReason in src/federation-exchange.ts plus a
+// `success` label. Distinct metric because the operational signal is
+// distinct: a federation-exchange spike means an external IdP (today:
+// Tailscale) is being asked to verify our identity, which lives on a
+// different dashboard panel from the platform-internal service-exchange
+// flow.
+export const authFederationExchangeTotal = new Counter({
+  name: "auth_federation_exchange_total",
+  help: "Calls to /api/auth/exchange/federation, labeled by outcome.",
+  labelNames: ["result"] as const,
+  registers: [registry],
+});
+
+export type FederationExchangeResultLabel =
+  | "success"
+  | "denied_token"
+  | "denied_allowlist"
+  | "denied_audience_missing"
+  | "denied_audience_not_allowed"
+  | "denied_ttl"
+  | "error_jwt_mint"
+  | "error_internal";
+
+export function recordFederationExchange(result: FederationExchangeResultLabel): void {
+  authFederationExchangeTotal.labels(result).inc();
+}

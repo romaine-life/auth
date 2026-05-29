@@ -137,6 +137,32 @@ k8sOidc:
     tank-operator-slot-8-sessions/tank-operator-slot-8-session,
     tank-operator-slot-9-sessions/tank-operator-slot-9-session,
     tank-operator-slot-10-sessions/tank-operator-slot-10-session
+  # External-audience federation exchange (/api/auth/exchange/federation).
+  # Workloads present their projected SA token here and receive an
+  # auth.romaine.life-signed JWT scoped to a specific external audience
+  # (today: Tailscale's tailnet identifier). Discovery for the external
+  # IdP is served at the ROOT (/.well-known/openid-configuration) so a
+  # third-party verifier finds /api/auth/jwks via standard discovery.
+  #
+  # Distinct from the service-exchange allowlist: trust to act as a
+  # service principal inside romaine.life is NOT the same trust
+  # decision as trust to assert identity to an external IdP.
+  federationAudience: "https://auth.romaine.life"
+  # Allowed (namespace, serviceAccount) callers for the federation path.
+  # Pre-populated with glimmung's native-runner SA — the first concrete
+  # consumer (it dials Tailscale's /oauth/token with our JWT as
+  # `client_assertion` per RFC 7523). Other workloads need an explicit
+  # add here AND a matching audience in `federationAudienceAllowlist`.
+  federationSaAllowlist: "glimmung-runs/glimmung-native-runner"
+  # Comma-separated audience patterns. Trailing `*` is a suffix wildcard
+  # (e.g. "api.tailscale.com/*" matches the specific Tailscale tailnet
+  # identifier). Empty allowlist refuses everything — the route is
+  # effectively disabled until at least one entry lands here.
+  #
+  # Tailscale's "Trust credentials" OIDC trust binding for the
+  # romaine.life tailnet is api.tailscale.com/T6vFBk1dAa11CNTRL-kf6kJRvG5T11CNTRL;
+  # the wildcard tolerates Tailscale-side rotation of that suffix.
+  federationAudienceAllowlist: "api.tailscale.com/*"
   # Namespaces hosting service-principal consumer pods — the auth pod
   # gets a cross-namespace Role + RoleBinding for `pods get` in each so
   # /api/auth/exchange/k8s can read pod metadata at exchange time.
