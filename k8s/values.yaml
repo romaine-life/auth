@@ -149,11 +149,13 @@ k8sOidc:
   # decision as trust to assert identity to an external IdP.
   federationAudience: "https://auth.romaine.life"
   # Allowed (namespace, serviceAccount) callers for the federation path.
-  # Pre-populated with glimmung's native-runner SA — the first concrete
-  # consumer (it dials Tailscale's /oauth/token with our JWT as
-  # `client_assertion` per RFC 7523). Other workloads need an explicit
-  # add here AND a matching audience in `federationAudienceAllowlist`.
-  federationSaAllowlist: "glimmung-runs/glimmung-native-runner"
+  # Glimmung's main pod (`glimmung/infra-shared`) is the first concrete
+  # consumer — the lease-callback handler runs there, NOT in the
+  # per-run native-runner pod, and that handler dials Tailscale's
+  # /oauth/token with our JWT as `client_assertion` per RFC 7523.
+  # Other workloads need an explicit add here AND a matching audience
+  # in `federationAudienceAllowlist`.
+  federationSaAllowlist: "glimmung/infra-shared"
   # Comma-separated audience patterns. Trailing `*` is a suffix wildcard
   # (e.g. "api.tailscale.com/*" matches the specific Tailscale tailnet
   # identifier). Empty allowlist refuses everything — the route is
