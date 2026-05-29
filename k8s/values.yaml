@@ -155,7 +155,12 @@ k8sOidc:
   # /oauth/token with our JWT as `client_assertion` per RFC 7523.
   # Other workloads need an explicit add here AND a matching audience
   # in `federationAudienceAllowlist`.
-  federationSaAllowlist: "glimmung/infra-shared"
+  #
+  # tank-operator-sessions/claude-session is added so an operator session
+  # pod can mint a tag:spirelens-orchestrator auth key via the same
+  # federation flow glimmung uses, to exercise tailnet reachability when
+  # diagnosing the spirelens env-prep SSH path.
+  federationSaAllowlist: "glimmung/infra-shared, tank-operator-sessions/claude-session"
   # Comma-separated audience patterns. Trailing `*` is a suffix wildcard
   # (e.g. "api.tailscale.com/*" matches the specific Tailscale tailnet
   # identifier). Empty allowlist refuses everything — the route is
