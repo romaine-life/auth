@@ -110,6 +110,25 @@ spec:
               value: {{ .Values.k8sOidc.federationSaAllowlist | quote }}
             - name: FEDERATION_AUDIENCE_ALLOWLIST
               value: {{ .Values.k8sOidc.federationAudienceAllowlist | quote }}
+            # SSH user-certificate exchange (/api/auth/exchange/ssh-cert).
+            # auth owns the SSH CA key (migration that retired glimmung's
+            # local signer) and signs short-lived OpenSSH user certs. The CA
+            # private key is PKCS#8 PEM ed25519, synced from ng6-auth KV
+            # (`auth-ssh-ca-private-key`) via the ExternalSecret. Distinct
+            # allowlist from the federation/service paths — minting a host
+            # login credential is a separate trust decision. See
+            # src/ssh-cert-exchange.ts.
+            - name: SSH_CA_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: SSH_CA_PRIVATE_KEY
+            - name: K8S_SSH_CERT_AUDIENCE
+              value: {{ .Values.k8sOidc.sshCertAudience | quote }}
+            - name: K8S_SSH_CERT_SA_ALLOWLIST
+              value: {{ .Values.k8sOidc.sshCertSaAllowlist | quote }}
+            - name: SSH_CERT_PRINCIPAL_PATTERN
+              value: {{ .Values.k8sOidc.sshCertPrincipalPattern | quote }}
             # Trust the in-cluster CA so native fetch's TLS validates the
             # apiserver cert when src/k8s-pod.ts calls
             # https://kubernetes.default.svc. Avoids pulling in undici

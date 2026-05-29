@@ -170,6 +170,45 @@ k8sOidc:
   # romaine.life tailnet is api.tailscale.com/T6vFBk1dAa11CNTRL-kf6kJRvG5T11CNTRL;
   # the wildcard tolerates Tailscale-side rotation of that suffix.
   federationAudienceAllowlist: "api.tailscale.com/*"
+  # SSH user-certificate exchange (/api/auth/exchange/ssh-cert). auth owns
+  # the SSH CA key and signs short-lived OpenSSH user certs here, replacing
+  # glimmung's retired local signer (glimmung/internal/server/ssh_ca.go +
+  # the `glimmung-ssh-ca-private-key` KV secret, both deleted in the
+  # glimmung-side PR of this migration). The CA private key itself is the
+  # `auth-ssh-ca-private-key` KV secret synced via the ExternalSecret; it
+  # is NOT a value here (never put a private key in chart values).
+  #
+  # ONE-TIME PROVISIONING (do this before the first deploy that needs
+  # issuance, the same way `backups.storageAccount` is copied in after
+  # tofu):
+  #   ssh-keygen -t ed25519 -f /tmp/auth-ssh-ca -N "" -C auth.romaine.life-ssh-ca
+  #   ssh-keygen -p -m PKCS8 -f /tmp/auth-ssh-ca -N ""   # convert priv to PKCS#8 PEM
+  #   az keyvault secret set --vault-name ng6-auth \
+  #     --name auth-ssh-ca-private-key --file /tmp/auth-ssh-ca
+  #   shred -u /tmp/auth-ssh-ca /tmp/auth-ssh-ca.pub
+  # The public half is then served at GET /api/ssh/ca for hosts to trust.
+  # An unset secret short-circuits issuance to 503 (fail closed) and makes
+  # GET /api/ssh/ca return 404 — the right failure mode while the key is
+  # being provisioned, never a silently-empty trust anchor.
+  #
+  # Audience pinned on inbound SA tokens (same value the caller mounts its
+  # projected token with). Distinct env from the federation/service
+  # audiences so the trust surfaces stay independently auditable.
+  sshCertAudience: "https://auth.romaine.life"
+  # Allowed (namespace, serviceAccount) callers for SSH-cert issuance.
+  # Glimmung's pod runs as `glimmung/infra-shared` and is the per-run
+  # issuance gateway: its native-runner ssh-cert callback derives the
+  # run-scoped key_id (`glimmung-run:<project>/<run_id>`) and principal
+  # (`<project>-agent`) and calls this endpoint. Deliberately NARROWER
+  # than serviceSaAllowlist/federationSaAllowlist — minting a host login
+  # credential is a higher-trust action than minting a service JWT, so
+  # only the issuance gateway lands here.
+  sshCertSaAllowlist: "glimmung/infra-shared"
+  # Server-side principal grammar. auth refuses to stamp any principal
+  # that does not match — a caller cannot request `root` or an arbitrary
+  # login. Glimmung's principals are `<project>-agent` (e.g.
+  # `spirelens-agent`); the `-agent` suffix is the fail-closed default.
+  sshCertPrincipalPattern: "^[a-z0-9][a-z0-9-]{0,62}-agent$"
   # Namespaces hosting service-principal consumer pods — the auth pod
   # gets a cross-namespace Role + RoleBinding for `pods get` in each so
   # /api/auth/exchange/k8s can read pod metadata at exchange time.

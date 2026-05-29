@@ -134,3 +134,36 @@ export type FederationExchangeResultLabel =
 export function recordFederationExchange(result: FederationExchangeResultLabel): void {
   authFederationExchangeTotal.labels(result).inc();
 }
+
+// SSH user-certificate exchange (/api/auth/exchange/ssh-cert). auth owns
+// the SSH CA key (migration that retired glimmung's local signer) and
+// signs short-lived OpenSSH user certs here. Distinct metric because the
+// operational signal is distinct: a spike means host-login credentials
+// are being minted, which sits on its own dashboard panel and has its own
+// alert posture (any sustained `error_ca_unconfigured` means issuance is
+// down even though sign-in/federation are fine). Per-mint identity
+// (subject, key_id, principals) lives in the structured audit log line,
+// NOT in a label — same cardinality discipline as the bot-token mint.
+export const authSshCertExchangeTotal = new Counter({
+  name: "auth_ssh_cert_exchange_total",
+  help: "Calls to /api/auth/exchange/ssh-cert, labeled by outcome.",
+  labelNames: ["result"] as const,
+  registers: [registry],
+});
+
+export type SshCertExchangeResultLabel =
+  | "success"
+  | "denied_token"
+  | "denied_allowlist"
+  | "denied_public_key"
+  | "denied_key_id"
+  | "denied_principal"
+  | "denied_extension"
+  | "denied_ttl"
+  | "error_ca_unconfigured"
+  | "error_sign"
+  | "error_internal";
+
+export function recordSshCertExchange(result: SshCertExchangeResultLabel): void {
+  authSshCertExchangeTotal.labels(result).inc();
+}

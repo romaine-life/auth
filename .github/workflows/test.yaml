@@ -18,6 +18,13 @@ jobs:
         with:
           node-version: "20"
           cache: "npm"
+      # openssh-client provides ssh-keygen, which the SSH user-cert
+      # contract test (src/ssh-cert.test.ts) shells out to for an
+      # independent `ssh-keygen -L` parse of the cert we sign. Installed
+      # explicitly so that cross-check is a hard gate here and can never
+      # silently self-skip (the test skips only when ssh-keygen is absent,
+      # which is the bare-pod dev case, not CI).
+      - run: sudo apt-get update && sudo apt-get install -y openssh-client
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
