@@ -39,6 +39,10 @@ import {
   exchangeServiceAccountToken,
   ExchangeError,
 } from "./service-exchange.js";
+import {
+  exchangeFederationToken,
+  FederationExchangeError,
+} from "./federation-exchange.js";
 import { mintAuthJwt } from "./mint-jwt.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
 import {
@@ -46,6 +50,7 @@ import {
   recordAdminOrigins,
   recordAdminServiceTokenMint,
   recordExchange,
+  recordFederationExchange,
   registry,
 } from "./metrics.js";
 
@@ -267,6 +272,72 @@ if (process.env.TEST_MODE !== "true") {
     }
   });
 
+  // ── External-audience federation exchange ───────────────────────────────
+  // Workload-identity federation in the RFC 7523 sense: a romaine.life
+  // workload presents its projected k8s SA token, asks for a JWT scoped to
+  // a specific external audience (today: Tailscale's tailnet identifier),
+  // and the third-party IdP verifies the signature against /api/auth/jwks
+  // via the root /.well-known/openid-configuration discovery doc.
+  //
+  // Structurally separate from /api/auth/exchange/k8s: different inbound
+  // allowlist, different output shape (no role / actor_email / synthetic
+  // user upsert), different audience contract. See
+  // src/federation-exchange.ts header for the trust-boundary rationale.
+  //
+  // Body: { audience: string, ttl_seconds?: number }. Audience matched
+  // against FEDERATION_AUDIENCE_ALLOWLIST (env-derived, comma-separated,
+  // trailing-`*` suffix patterns supported). Inbound allowlist is
+  // K8S_FEDERATION_SA_ALLOWLIST (NOT shared with the service-exchange
+  // allowlist — different security context).
+  app.post("/api/auth/exchange/federation", async (c) => {
+    const header = c.req.header("Authorization");
+    if (!header || !header.startsWith("Bearer ")) {
+      recordFederationExchange("denied_token");
+      return c.json({ error: "missing bearer token" }, 401);
+    }
+    const saToken = header.slice("Bearer ".length).trim();
+
+    let body: { audience?: unknown; ttl_seconds?: unknown };
+    try {
+      body = (await c.req.json()) as { audience?: unknown; ttl_seconds?: unknown };
+    } catch {
+      recordFederationExchange("denied_audience_missing");
+      return c.json(
+        { error: "request body must be JSON with an `audience` field", reason: "denied_audience_missing" },
+        400,
+      );
+    }
+    const audience = typeof body.audience === "string" ? body.audience : "";
+    const ttlSeconds =
+      typeof body.ttl_seconds === "number" ? body.ttl_seconds : undefined;
+
+    try {
+      const result = await exchangeFederationToken({
+        saToken,
+        audience,
+        ttlSeconds,
+      });
+      recordFederationExchange("success");
+      return c.json({
+        token: result.token,
+        expires_at: result.expiresAt,
+        sub: result.subject,
+        aud: result.audience,
+      });
+    } catch (e) {
+      if (e instanceof FederationExchangeError) {
+        recordFederationExchange(e.reason);
+        return c.json(
+          { error: e.message, reason: e.reason },
+          e.status as Parameters<typeof c.json>[1],
+        );
+      }
+      console.error("[/api/auth/exchange/federation] unexpected:", e);
+      recordFederationExchange("error_internal");
+      return c.json({ error: "internal error", reason: "error_internal" }, 500);
+    }
+  });
+
   // ── User-token CLI flow routes ───────────────────────────────────────────
   // Registered HERE (inside the TEST_MODE-false block) so they land before
   // the `app.on(["GET", "POST"], "/api/auth/*", auth.handler)` catch-all
@@ -454,6 +525,47 @@ if (TEST_MODE) {
   // Mount Better Auth at /api/auth/*. Handles sign-in flows, JWKS, sessions, etc.
   app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 }
+
+// ── OIDC discovery at the ROOT ─────────────────────────────────────────────
+// Better Auth's OIDC provider plugin (src/auth.ts) already serves a
+// discovery doc at /api/auth/.well-known/openid-configuration. That URL
+// is fine for relying parties we configure by hand (Grafana doesn't
+// autodiscover). External IdPs that treat us as a workload-identity
+// federation issuer — today: Tailscale's "Trust credentials" OIDC type —
+// fetch the discovery doc at the ROOT of the issuer URL, with no
+// `/api/auth` prefix. RFC 8414 pins the discovery path as
+// `<issuer>/.well-known/openid-configuration`.
+//
+// We expose a hand-built minimal doc here (issuer + jwks_uri) rather
+// than proxying to Better Auth's full doc because:
+//   (a) Tailscale only needs those two fields to verify a JWT signature,
+//       and a minimal doc has no extra surface for the external party
+//       to misinterpret;
+//   (b) the Better Auth doc advertises authorization/token/userinfo
+//       endpoints that are scoped to the Grafana-style OIDC RP flow,
+//       not to the JWT-bearer / RFC 7523 federation flow;
+//   (c) one document, hand-controlled, hand-reviewed, hand-tested.
+//
+// Both paths advertise the same `issuer` and the same `jwks_uri`, so
+// any tool that follows discovery to the JWKS lands on the same
+// public key set either way.
+app.get("/.well-known/openid-configuration", (c) => {
+  const issuer = (process.env.BASE_URL ?? "https://auth.romaine.life").replace(/\/$/, "");
+  return c.json({
+    issuer,
+    jwks_uri: `${issuer}/api/auth/jwks`,
+    // No `authorization_endpoint` / `token_endpoint` / `userinfo_endpoint`
+    // on purpose — the consumers of THIS document (external workload-
+    // identity-federation verifiers) do not run an OIDC code flow against
+    // us. They fetch JWKS, verify a JWT we already minted, and stop.
+    // First-party OIDC RPs (Grafana) continue to use the Better-Auth-
+    // served doc at /api/auth/.well-known/openid-configuration which
+    // does advertise those endpoints.
+    id_token_signing_alg_values_supported: ["RS256"],
+    subject_types_supported: ["public"],
+    response_types_supported: ["id_token"],
+  });
+});
 
 // ── Landing / dashboard ────────────────────────────────────────────────────
 // Server-rendered HTML. Anonymous: welcome + sign-in buttons. Authenticated:

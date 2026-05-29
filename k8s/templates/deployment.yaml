@@ -97,6 +97,19 @@ spec:
               value: {{ .Values.k8sOidc.serviceAudience | quote }}
             - name: K8S_SERVICE_SA_ALLOWLIST
               value: {{ .Values.k8sOidc.serviceSaAllowlist | quote }}
+            # External-audience federation exchange
+            # (/api/auth/exchange/federation). Workloads here mint
+            # auth.romaine.life-signed JWTs scoped to a third-party
+            # IdP's audience (today: Tailscale). Distinct allowlist
+            # from K8S_SERVICE_SA_ALLOWLIST — different security
+            # context, different audience surface. See
+            # src/federation-exchange.ts header.
+            - name: K8S_FEDERATION_AUDIENCE
+              value: {{ .Values.k8sOidc.federationAudience | quote }}
+            - name: K8S_FEDERATION_SA_ALLOWLIST
+              value: {{ .Values.k8sOidc.federationSaAllowlist | quote }}
+            - name: FEDERATION_AUDIENCE_ALLOWLIST
+              value: {{ .Values.k8sOidc.federationAudienceAllowlist | quote }}
             # Trust the in-cluster CA so native fetch's TLS validates the
             # apiserver cert when src/k8s-pod.ts calls
             # https://kubernetes.default.svc. Avoids pulling in undici
