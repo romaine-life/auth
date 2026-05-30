@@ -236,6 +236,13 @@ export const auth = betterAuth({
         }
         return {
           role: u.role ?? "user",
+          // `groups` mirrors `role` as a single-element array. Native OIDC
+          // RPs (Grafana) read `role` directly, but RPs that sit behind Dex
+          // (Argo CD) only ever see the claims Dex chooses to forward — and
+          // Dex re-mints its own id_token, dropping arbitrary scalar claims
+          // like `role` while passing a standard `groups` array through. So
+          // Argo CD's RBAC matches `g, admin, role:admin` against this.
+          groups: [u.role ?? "user"],
           apps,
         };
       },
@@ -253,6 +260,19 @@ export const auth = betterAuth({
           // simply by signing into auth.romaine.life — bouncing them
           // through a consent page for an internal tool is friction with
           // no security value.
+          skipConsent: true,
+        },
+        {
+          clientId: "argocd",
+          clientSecret: fromEnv("OIDC_ARGOCD_CLIENT_SECRET"),
+          name: "Argo CD",
+          type: "web",
+          metadata: null,
+          disabled: false,
+          // Argo CD authenticates via Dex; this is Dex's callback. The Dex
+          // OIDC connector (id: romaine) autodiscovers us from the root
+          // discovery doc and forwards the `groups` claim to Argo CD RBAC.
+          redirectUrls: ["https://argocd.romaine.life/api/dex/callback"],
           skipConsent: true,
         },
       ],
