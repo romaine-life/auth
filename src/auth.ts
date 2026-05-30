@@ -236,12 +236,11 @@ export const auth = betterAuth({
         }
         return {
           role: u.role ?? "user",
-          // `groups` mirrors `role` as a single-element array. Native OIDC
-          // RPs (Grafana) read `role` directly, but RPs that sit behind Dex
-          // (Argo CD) only ever see the claims Dex chooses to forward — and
-          // Dex re-mints its own id_token, dropping arbitrary scalar claims
-          // like `role` while passing a standard `groups` array through. So
-          // Argo CD's RBAC matches `g, admin, role:admin` against this.
+          // `groups` mirrors `role` as a single-element array. Grafana reads
+          // `role` directly via role_attribute_path; Argo CD's RBAC matches
+          // on a groups claim (`scopes: '[groups]'` → `g, admin, role:admin`),
+          // so surfacing the role here as `groups` lets Argo CD authorize off
+          // the same platform role without a bespoke claim mapping.
           groups: [u.role ?? "user"],
           apps,
         };
@@ -264,15 +263,26 @@ export const auth = betterAuth({
         },
         {
           clientId: "argocd",
-          clientSecret: fromEnv("OIDC_ARGOCD_CLIENT_SECRET"),
+          // Public client — no secret. Argo CD talks to us DIRECTLY as a
+          // native OIDC relying party (configs.cm `oidc.config`,
+          // enablePKCEAuthentication: true), exactly like Grafana, not
+          // proxied through its bundled Dex. Argo CD only supports PKCE as a
+          // public client, and our provider requires PKCE, so the code
+          // challenge — not a client secret — authenticates the exchange.
+          // (Dex stays deployed solely for the mcp-argocd SA-token exchange
+          // via the aks-sa connector; it is not in this human-login path.)
+          type: "public",
           name: "Argo CD",
-          type: "web",
           metadata: null,
           disabled: false,
-          // Argo CD authenticates via Dex; this is Dex's callback. The Dex
-          // OIDC connector (id: romaine) autodiscovers us from the root
-          // discovery doc and forwards the `groups` claim to Argo CD RBAC.
-          redirectUrls: ["https://argocd.romaine.life/api/dex/callback"],
+          // Argo CD's native OIDC callback (NOT the /api/dex/callback used by
+          // the old Dex-proxied setup). It autodiscovers our endpoints from
+          // the root discovery doc. The localhost entry is the `argocd login
+          // --sso` CLI loopback.
+          redirectUrls: [
+            "https://argocd.romaine.life/auth/callback",
+            "http://localhost:8085/auth/callback",
+          ],
           skipConsent: true,
         },
       ],

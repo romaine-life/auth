@@ -644,13 +644,13 @@ if (TEST_MODE) {
 //      credentials" OIDC type). They only read `issuer` + `jwks_uri` to
 //      verify a JWT we already minted — they ignore every other field.
 //   2. OIDC relying parties that AUTODISCOVER and enforce issuer-match
-//      (Argo CD's Dex OIDC connector). Dex fetches `<issuer>/.well-known/
+//      (Argo CD's native OIDC client). Argo CD fetches `<issuer>/.well-known/
 //      openid-configuration`, requires the doc's `issuer` to equal the
-//      configured issuer, and refuses to let you set the authorize/token
-//      endpoints by hand. So it can only consume a root-served doc whose
-//      `issuer` is the bare origin AND which advertises the oauth2
-//      endpoints. (Grafana, by contrast, configures those endpoints
-//      explicitly and never touches this doc.)
+//      configured issuer, and derives the authorize/token endpoints from it
+//      rather than letting you set them by hand. So it can only consume a
+//      root-served doc whose `issuer` is the bare origin AND which advertises
+//      the oauth2 endpoints. (Grafana, by contrast, configures those
+//      endpoints explicitly and never touches this doc.)
 //
 // The authorize/token/userinfo endpoints below point at the Better-Auth
 // `oidcProvider` routes under /api/auth/oauth2/*. The non-root prefix is
@@ -665,8 +665,8 @@ app.get("/.well-known/openid-configuration", (c) => {
     jwks_uri: `${issuer}/api/auth/jwks`,
     // The oauth2 code-flow endpoints, served by the Better-Auth
     // `oidcProvider` plugin (src/auth.ts) under /api/auth/oauth2/*.
-    // Autodiscovering RPs (Argo CD's Dex) need these here at the root
-    // because Dex's issuer-match check forbids pointing it at the
+    // Autodiscovering RPs (Argo CD's native OIDC client) need these here at
+    // the root because the issuer-match check forbids pointing them at the
     // /api/auth-prefixed discovery doc (whose `issuer` is still the root).
     authorization_endpoint: `${issuer}/api/auth/oauth2/authorize`,
     token_endpoint: `${issuer}/api/auth/oauth2/token`,
