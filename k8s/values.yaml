@@ -207,7 +207,19 @@ k8sOidc:
   # than serviceSaAllowlist/federationSaAllowlist — minting a host login
   # credential is a higher-trust action than minting a service JWT, so
   # only the issuance gateway lands here.
-  sshCertSaAllowlist: "glimmung/infra-shared"
+  #
+  # tank-operator-sessions/claude-session is added as a second caller so an
+  # operator session pod can mint a `spirelens-agent` user cert (principal
+  # already matches sshCertPrincipalPattern) and SSH the spirelens laptop
+  # directly — validating the env-prep/run-issue-agent-phase orchestration
+  # scripts out-of-band, without dispatching a glimmung run per change. This
+  # mirrors the federationSaAllowlist entry that already grants the same SA
+  # tailnet reachability for the same diagnosis; this widens it from network
+  # reach to an actual (short-TTL, permit-pty-only) host login. Higher trust
+  # than the federation grant: any tank-operator-sessions session pod can now
+  # mint a spirelens-agent login cert. Revert both entries once the native
+  # SSH path is stable and no longer needs hand validation.
+  sshCertSaAllowlist: "glimmung/infra-shared, tank-operator-sessions/claude-session"
   # Server-side principal grammar. auth refuses to stamp any principal
   # that does not match — a caller cannot request `root` or an arbitrary
   # login. Glimmung's principals are `<project>-agent` (e.g.
