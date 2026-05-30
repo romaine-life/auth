@@ -59,6 +59,8 @@ import {
   recordSshCertExchange,
   registry,
 } from "./metrics.js";
+import { type JSONWebKeySet } from "jose";
+import { verifyAdminBearerJwt } from "./admin-bearer.js";
 
 // Cross-origin fetches from .romaine.life apps that hit /api/auth/* to
 // pick up a JWT (silent-exchange path) or check session need CORS
@@ -2225,16 +2227,56 @@ app.get("/", async (c) => {
 // Source of truth for the platform-wide admin list (formerly the
 // `romaine-life-admin-emails` KV secret). Gated on role=admin claim.
 
+// Issuer the admin bearer path pins, matching the romaine-auth-py verifier
+// contract (AUTH_ROMAINE_LIFE_ISSUER, default https://auth.romaine.life).
+// Audience is intentionally not pinned — every auth.romaine.life token
+// carries aud=issuer, so it adds no per-app isolation (same rationale as
+// romaine-auth-py).
+const ADMIN_BEARER_ISSUER = (process.env.BASE_URL ?? "https://auth.romaine.life").replace(/\/$/, "");
+
+// Resolve our live JWKS in-process and verify a role=admin bearer token
+// against it. getJwks() reads the key set from the DB each call (admin
+// traffic is low) so a key rotation is picked up without a restart. The
+// verification contract lives in src/admin-bearer.ts.
+async function verifyAdminBearer(token: string) {
+  const jwks = (await auth.api.getJwks()) as JSONWebKeySet;
+  return verifyAdminBearerJwt(token, jwks, ADMIN_BEARER_ISSUER);
+}
+
 async function requireAdmin(c: Context) {
   if (TEST_MODE) {
     if (!isTestSignedIn(c)) return { status: 302 as const, location: "/" };
     return { ok: true as const, user: TEST_AUTH_STATE.user };
   }
+  // 1. Browser session (cookie) — the /admin console path.
   const result = await auth.api.getSession({ headers: c.req.raw.headers });
-  if (!result?.session) return { status: 302 as const, location: "/" };
-  const role = (result.user as { role?: string }).role ?? "user";
-  if (role !== "admin") return { status: 403 as const };
-  return { ok: true as const, user: result.user };
+  if (result?.session) {
+    const role = (result.user as { role?: string }).role ?? "user";
+    if (role !== "admin") return { status: 403 as const };
+    return { ok: true as const, user: result.user };
+  }
+  // 2. Bearer JWT — the machine/API path. mcp-auth forwards the caller's
+  //    auth.romaine.life JWT here, and an admin can call directly with an
+  //    authromaine bot token. A present-but-invalid token is a 403 (a
+  //    deliberate, failed attempt), not a 302 redirect to the login page.
+  const authz = c.req.header("Authorization");
+  if (authz?.startsWith("Bearer ")) {
+    try {
+      const claims = await verifyAdminBearer(authz.slice("Bearer ".length).trim());
+      return {
+        ok: true as const,
+        user: {
+          id: typeof claims.sub === "string" ? claims.sub : "",
+          email: typeof claims.email === "string" ? claims.email : "",
+          name: typeof claims.name === "string" ? claims.name : "",
+          role: "admin" as const,
+        },
+      };
+    } catch {
+      return { status: 403 as const };
+    }
+  }
+  return { status: 302 as const, location: "/" };
 }
 
 app.get("/admin", async (c) => {
