@@ -161,15 +161,19 @@ k8sOidc:
   # federation flow glimmung uses, to exercise tailnet reachability when
   # diagnosing the spirelens env-prep SSH path.
   federationSaAllowlist: "glimmung/infra-shared, tank-operator-sessions/claude-session"
-  # Comma-separated audience patterns. Trailing `*` is a suffix wildcard
-  # (e.g. "api.tailscale.com/*" matches the specific Tailscale tailnet
-  # identifier). Empty allowlist refuses everything — the route is
-  # effectively disabled until at least one entry lands here.
+  # Comma-separated audience patterns. An entry with no `*` is an exact
+  # match; a single trailing `*` is a suffix wildcard. Empty allowlist
+  # refuses everything — the route is effectively disabled until at least
+  # one entry lands here.
   #
-  # Tailscale's "Trust credentials" OIDC trust binding for the
-  # romaine.life tailnet is api.tailscale.com/T6vFBk1dAa11CNTRL-kf6kJRvG5T11CNTRL;
-  # the wildcard tolerates Tailscale-side rotation of that suffix.
-  federationAudienceAllowlist: "api.tailscale.com/*"
+  # Pinned to the exact OIDC trust-credential audience for the romaine.life
+  # tailnet (Tailscale "Trust credentials" client id
+  # T6vFBk1dAa11CNTRL-kf6kJRvG5T11CNTRL). Previously this was the wildcard
+  # "api.tailscale.com/*", which would have minted-key-exchange-authorized
+  # ANY Tailscale tailnet's trust credential, not just ours. Exact match is
+  # least-privilege; if Tailscale ever rotates the client-id suffix, update
+  # this value (and the matching console-side trust credential) in lockstep.
+  federationAudienceAllowlist: "api.tailscale.com/T6vFBk1dAa11CNTRL-kf6kJRvG5T11CNTRL"
   # SSH user-certificate exchange (/api/auth/exchange/ssh-cert). auth owns
   # the SSH CA key and signs short-lived OpenSSH user certs here, replacing
   # glimmung's retired local signer (glimmung/internal/server/ssh_ca.go +
