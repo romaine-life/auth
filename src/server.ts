@@ -639,34 +639,47 @@ if (TEST_MODE) {
 // `/api/auth` prefix. RFC 8414 pins the discovery path as
 // `<issuer>/.well-known/openid-configuration`.
 //
-// We expose a hand-built minimal doc here (issuer + jwks_uri) rather
-// than proxying to Better Auth's full doc because:
-//   (a) Tailscale only needs those two fields to verify a JWT signature,
-//       and a minimal doc has no extra surface for the external party
-//       to misinterpret;
-//   (b) the Better Auth doc advertises authorization/token/userinfo
-//       endpoints that are scoped to the Grafana-style OIDC RP flow,
-//       not to the JWT-bearer / RFC 7523 federation flow;
-//   (c) one document, hand-controlled, hand-reviewed, hand-tested.
+// We hand-build this doc rather than proxying Better Auth's full one. It
+// serves two distinct classes of consumer, both of which fetch discovery
+// at the ROOT of the issuer:
+//   1. Workload-identity-federation verifiers (Tailscale's "Trust
+//      credentials" OIDC type). They only read `issuer` + `jwks_uri` to
+//      verify a JWT we already minted — they ignore every other field.
+//   2. OIDC relying parties that AUTODISCOVER and enforce issuer-match
+//      (Argo CD's native OIDC client). Argo CD fetches `<issuer>/.well-known/
+//      openid-configuration`, requires the doc's `issuer` to equal the
+//      configured issuer, and derives the authorize/token endpoints from it
+//      rather than letting you set them by hand. So it can only consume a
+//      root-served doc whose `issuer` is the bare origin AND which advertises
+//      the oauth2 endpoints. (Grafana, by contrast, configures those
+//      endpoints explicitly and never touches this doc.)
 //
-// Both paths advertise the same `issuer` and the same `jwks_uri`, so
-// any tool that follows discovery to the JWKS lands on the same
-// public key set either way.
+// The authorize/token/userinfo endpoints below point at the Better-Auth
+// `oidcProvider` routes under /api/auth/oauth2/*. The non-root prefix is
+// fine: RPs follow these URLs verbatim from the discovery doc. Class-1
+// (Tailscale) consumers ignore them. Both this doc and the Better-Auth doc
+// advertise the same `issuer` and `jwks_uri`, so any tool that follows
+// discovery to the JWKS lands on the same public key set either way.
 app.get("/.well-known/openid-configuration", (c) => {
   const issuer = (process.env.BASE_URL ?? "https://auth.romaine.life").replace(/\/$/, "");
   return c.json({
     issuer,
     jwks_uri: `${issuer}/api/auth/jwks`,
-    // No `authorization_endpoint` / `token_endpoint` / `userinfo_endpoint`
-    // on purpose — the consumers of THIS document (external workload-
-    // identity-federation verifiers) do not run an OIDC code flow against
-    // us. They fetch JWKS, verify a JWT we already minted, and stop.
-    // First-party OIDC RPs (Grafana) continue to use the Better-Auth-
-    // served doc at /api/auth/.well-known/openid-configuration which
-    // does advertise those endpoints.
+    // The oauth2 code-flow endpoints, served by the Better-Auth
+    // `oidcProvider` plugin (src/auth.ts) under /api/auth/oauth2/*.
+    // Autodiscovering RPs (Argo CD's native OIDC client) need these here at
+    // the root because the issuer-match check forbids pointing them at the
+    // /api/auth-prefixed discovery doc (whose `issuer` is still the root).
+    authorization_endpoint: `${issuer}/api/auth/oauth2/authorize`,
+    token_endpoint: `${issuer}/api/auth/oauth2/token`,
+    userinfo_endpoint: `${issuer}/api/auth/oauth2/userinfo`,
     id_token_signing_alg_values_supported: ["RS256"],
     subject_types_supported: ["public"],
-    response_types_supported: ["id_token"],
+    response_types_supported: ["code", "id_token"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+    scopes_supported: ["openid", "profile", "email"],
   });
 });
 
