@@ -9,7 +9,7 @@ image:
   # "5.651694e+06" — which is not a real ACR tag. The bump-and-push
   # step in .github/workflows/build-and-deploy.yaml writes the
   # quoted form for the same reason.
-  tag: "95d1ff0"
+  tag: "5a6d947"
 
 externalSecret:
   createStore: true
