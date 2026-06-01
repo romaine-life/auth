@@ -28,6 +28,10 @@ test("consumerForNamespace maps glimmung to pod-stable consumer", () => {
   });
 });
 
+test("consumerForNamespace rejects retired Hermes namespace", () => {
+  assert.strictEqual(consumerForNamespace("hermes"), undefined);
+});
+
 test("consumerForNamespace maps tank test-slot sessions to per-session consumers", () => {
   assert.deepStrictEqual(consumerForNamespace("tank-operator-slot-5-sessions"), {
     slug: "tank",

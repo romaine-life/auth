@@ -37,21 +37,13 @@ export const RESERVED_SERVICE_EMAIL_DOMAINS: readonly string[] = [
   "service.mcp-k8s.romaine.life",
   "service.mcp-argocd.romaine.life",
   "service.mcp-azure-personal.romaine.life",
-  // Hermes (`nelsong6/hermes`) is a singleton StatefulSet — one pod
-  // serves many users; no per-pod human actor. Onboarded as a
-  // pod-stable consumer (same shape as the mcp-* shared servers above)
-  // so the exchange skips annotation reads and uses a fixed stableId.
-  // See nelsong6/tank-operator#540.
-  "service.hermes.romaine.life",
   // Tank-operator's orchestrator Deployment (the long-lived process
   // in the `tank-operator` namespace, distinct from per-session pods
   // in `tank-operator-sessions` which use `service.tank.romaine.life`).
   // Onboarded as pod-stable so the orchestrator itself can mint a
-  // service-principal JWT for outbound calls — today: driving Hermes'
-  // OpenAI-compatible API server for hermes_gui session turns. Distinct
+  // service-principal JWT for outbound control-plane calls. Distinct
   // subdomain from the `tank` slug so a leaked session JWT and a leaked
-  // orchestrator JWT can't be swapped at a verifier that pins on
-  // domain. See nelsong6/tank-operator#540 follow-up.
+  // orchestrator JWT can't be swapped at a verifier that pins on domain.
   "service.tank-operator.romaine.life",
   // Glimmung's long-lived orchestrator uses this service identity for
   // cleanup callbacks into downstream apps when no human request token is
