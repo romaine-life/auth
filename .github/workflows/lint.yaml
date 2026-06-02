@@ -11,6 +11,6 @@ concurrency:
 
 jobs:
   code-quality:
-    uses: nelsong6/pipeline-templates/.github/workflows/lint-template.yml@main
+    uses: romaine-life/pipeline-templates/.github/workflows/lint-template.yml@main
     with:
       working_directory: '.'
