@@ -77,7 +77,7 @@ test("RESERVED_SERVICE_EMAIL_DOMAINS contains the mcp-k8s / mcp-argocd / mcp-azu
   assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.mcp-azure-personal.romaine.life"));
 });
 
-test("RESERVED_SERVICE_EMAIL_DOMAINS contains the tank-operator orchestrator consumer (nelsong6/tank-operator#540 follow-up)", () => {
+test("RESERVED_SERVICE_EMAIL_DOMAINS contains the tank-operator orchestrator consumer (romaine-life/tank-operator#540 follow-up)", () => {
   assert.ok(RESERVED_SERVICE_EMAIL_DOMAINS.includes("service.tank-operator.romaine.life"));
 });
 

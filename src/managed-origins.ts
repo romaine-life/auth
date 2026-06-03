@@ -4,7 +4,7 @@
 // reconciler via the admin endpoints in src/server.ts; reads are per-request
 // behind a short in-process cache.
 //
-// See nelsong6/glimmung#142 for the cross-repo architecture.
+// See romaine-life/glimmung#142 for the cross-repo architecture.
 
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";

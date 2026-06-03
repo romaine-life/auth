@@ -4,7 +4,7 @@
 // an admin minting a 24h CLI bot token, or a service principal exchanging
 // a k8s SA token — is consumed by the same verifier contract. The shared
 // verifier library at nelsong6/romaine-auth-py and the duplicated
-// verifier in nelsong6/mcp-github both pin the required-claim set to:
+// verifier in romaine-life/mcp-github both pin the required-claim set to:
 //
 //     ["exp", "iat", "iss", "role"]
 //
@@ -27,7 +27,7 @@
 
 /** The required-claim set every auth.romaine.life consumer pins. Keep
  *  this list in sync with `require` in nelsong6/romaine-auth-py and
- *  the bespoke duplicate in nelsong6/mcp-github → auth_romaine.py.
+ *  the bespoke duplicate in romaine-life/mcp-github → auth_romaine.py.
  *  Adding a key here is a cross-repo contract change. */
 export const REQUIRED_CLAIMS = ["exp", "iat", "iss", "role"] as const;
 

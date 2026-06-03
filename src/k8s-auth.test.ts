@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseAllowlist } from "./k8s-auth.js";
 
 // Full JWT verification is exercised end-to-end by glimmung's integration
-// path in nelsong6/glimmung#142 stage 2. Here we cover the pure parser
+// path in romaine-life/glimmung#142 stage 2. Here we cover the pure parser
 // that gates which (namespace, serviceAccount) pairs are accepted — that
 // has been the bug vector for similar allowlists historically (whitespace,
 // duplicates, missing separator).

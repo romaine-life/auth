@@ -4,7 +4,7 @@
 
 /** Telemetry-grade reason for an exchange failure. Stable string set —
  *  if you add a value here, also extend the counter labels documented
- *  in nelsong6/tank-operator#486 Stage 5 observability. */
+ *  in romaine-life/tank-operator#486 Stage 5 observability. */
 export type ExchangeFailureReason =
   | "denied_token" // signature, issuer, audience, expiry, or claim shape
   | "denied_allowlist" // (ns, sa) not in K8S_SERVICE_SA_ALLOWLIST

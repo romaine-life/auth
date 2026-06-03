@@ -12,7 +12,7 @@
 // difference is `role=service` and an additional `actor_email` claim
 // carrying the human whose session this pod is serving.
 //
-// See nelsong6/tank-operator#486 for the full plan.
+// See romaine-life/tank-operator#486 for the full plan.
 
 import { eq } from "drizzle-orm";
 import { db } from "./db/client.js";

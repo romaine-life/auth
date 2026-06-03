@@ -34,7 +34,7 @@ curl -fsSL -X POST "$GLIMMUNG/v1/projects" \
   -d @- <<'JSON'
 {
   "name": "auth",
-  "github_repo": "nelsong6/auth",
+  "github_repo": "romaine-life/auth",
   "metadata": {
     "native_webapp": true,
     "native_standby_dns": {

@@ -161,7 +161,7 @@ export const jwks = pgTable("jwks", {
 
 // Glimmung-managed slot origin allowlist. Each row contributes one entry
 // to Better Auth's `trustedOrigins` and Hono's CORS allowlist on
-// `/api/auth/*`. Owned by glimmung's reconciler — see nelsong6/glimmung#142.
+// `/api/auth/*`. Owned by glimmung's reconciler — see romaine-life/glimmung#142.
 //
 // `project` is glimmung's project name (e.g. "tank-operator", "glimmung").
 // `wildcard` is a host pattern like "https://*.tank.dev.romaine.life" —

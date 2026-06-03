@@ -29,7 +29,7 @@ investing, house-hunt, and fzt-frontend.
 - `POST /admin/bot-tokens` — admin-only: mint a 24h bot token (`role=admin`, `purpose=bot`) for break-glass CLI / curl use
 - `POST /admin/service-tokens` — admin-only: mint a 24h service token (`role=service`, `purpose=bot`, `actor_email=<admin>`) for calling service-only MCPs (e.g. `mcp-github`) from a workstation
 - `POST /api/cli/device` + `POST /api/cli/token` — browser-approved CLI/device flow for minting the same 24h bot token without copying an auth cookie
-- `GET /api/auth/cli/user-login` + `POST /api/auth/cli/user-token` — native-desktop sign-in flow (RFC 8252, PKCE + loopback). The user signs in normally with Microsoft/Google in the browser; a native app on the same machine receives the user's own JWT (`role=user|admin`, no `purpose=bot`) via a one-time code redeemed at the token endpoint. No admin approval — the user IS the requester. First consumer: `nelsong6/shows`'s `desktop/`.
+- `GET /api/auth/cli/user-login` + `POST /api/auth/cli/user-token` — native-desktop sign-in flow (RFC 8252, PKCE + loopback). The user signs in normally with Microsoft/Google in the browser; a native app on the same machine receives the user's own JWT (`role=user|admin`, no `purpose=bot`) via a one-time code redeemed at the token endpoint. No admin approval — the user IS the requester. First consumer: `romaine-life/shows`'s `desktop/`.
 - `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, `auth_federation_exchange_total{result}`, `auth_ssh_cert_exchange_total{result}`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
@@ -50,7 +50,7 @@ Validation pins issuer, audience (`https://auth.romaine.life`), and the
 Glimmung's deployment mounts a projected token with the right audience so
 a stolen token cannot be replayed against another JWT verifier.
 
-See [nelsong6/glimmung#142](https://glimmung.romaine.life/i/glimmung/142) for
+See [romaine-life/glimmung#142](https://glimmung.romaine.life/i/glimmung/142) for
 the cross-repo architecture.
 
 ## Service-principal exchange
@@ -86,7 +86,7 @@ in `src/auth.ts` refuses any IdP-sourced user-create whose email is in a
 reserved domain. The issued JWT carries an extra `actor_email` claim with
 the human owner so downstream services can audit and scope per-owner.
 
-See [nelsong6/tank-operator#486](https://github.com/nelsong6/tank-operator/issues/486)
+See [romaine-life/tank-operator#486](https://github.com/romaine-life/tank-operator/issues/486)
 for the cross-repo architecture and rollout plan.
 
 ## SSH certificate issuance
@@ -182,7 +182,7 @@ admin's email, so structured-log search is the audit path).
 `POST /admin/service-tokens` is the sibling of `/admin/bot-tokens` for the
 case where the downstream consumer's verifier pins on `role=service` rather
 than `role=admin`. The motivating consumer is
-[`nelsong6/mcp-github`](https://github.com/nelsong6/mcp-github), whose
+[`romaine-life/mcp-github`](https://github.com/romaine-life/mcp-github), whose
 JWT validator requires:
 
 ```

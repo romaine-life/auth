@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Migration guard for nelsong6/glimmung#142. Per-project slot wildcards
+// Migration guard for romaine-life/glimmung#142. Per-project slot wildcards
 // (`https://*.{project}.dev.romaine.life`) live in the managed_origin
 // table, populated by glimmung's reconciler. They MUST NOT be statically
 // listed in auth source — that path is the deletion target this CI gate
@@ -49,7 +49,7 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`- ${failure}`);
   console.error("");
   console.error("Per-project slot wildcards live in the managed_origin table,");
-  console.error("populated by glimmung's reconciler. See nelsong6/glimmung#142.");
+  console.error("populated by glimmung's reconciler. See romaine-life/glimmung#142.");
   process.exit(1);
 }
 

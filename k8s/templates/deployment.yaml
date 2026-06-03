@@ -80,7 +80,7 @@ spec:
             # Glimmung-managed slot origin admin surface
             # (/api/admin/origins/*). Inbound auth: k8s SA tokens signed by
             # the cluster OIDC issuer below, with audience = this service.
-            # See nelsong6/glimmung#142.
+            # See romaine-life/glimmung#142.
             - name: K8S_OIDC_ISSUER
               value: {{ .Values.k8sOidc.issuer | quote }}
             - name: K8S_ADMIN_AUDIENCE
@@ -92,7 +92,7 @@ spec:
             # an auth.romaine.life JWT with role=service. Separate audience
             # + allowlist from the admin path so an admin token cannot be
             # replayed as a service principal and vice versa. See
-            # nelsong6/tank-operator#486.
+            # romaine-life/tank-operator#486.
             - name: K8S_SERVICE_AUDIENCE
               value: {{ .Values.k8sOidc.serviceAudience | quote }}
             - name: K8S_SERVICE_SA_ALLOWLIST

@@ -18,7 +18,7 @@
 // (service_account_<hash>@noreply.gitlab.example.com) and GitHub App bots
 // (<id>+<name>[bot]@users.noreply.github.com).
 //
-// See nelsong6/tank-operator#486.
+// See romaine-life/tank-operator#486.
 
 /**
  * The set of DNS subdomains reserved for synthetic service-principal emails.

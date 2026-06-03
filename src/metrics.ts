@@ -9,7 +9,7 @@
 // /metrics endpoint exports everything (plus the built-in Node process
 // + GC metrics from collectDefaultMetrics).
 //
-// See nelsong6/tank-operator#486 stage 5.
+// See romaine-life/tank-operator#486 stage 5.
 import { collectDefaultMetrics, Counter, Registry } from "prom-client";
 
 export const registry = new Registry();
@@ -89,7 +89,7 @@ export function recordAdminBotTokenMint(): void {
 // Admin service-token mint (/admin/service-tokens). Sibling surface to
 // the bot-token mint above, but produces a `role=service` JWT carrying
 // `actor_email=<admin's email>` so the token passes the verifier
-// contract that consumers like `nelsong6/mcp-github` pin on
+// contract that consumers like `romaine-life/mcp-github` pin on
 // (`role == "service"` + non-empty `actor_email`). Separate counter
 // because the operational signal is different: a bot-token spike is
 // "human debugging the apps"; a service-token spike is "human reaching

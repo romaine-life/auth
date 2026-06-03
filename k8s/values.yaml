@@ -58,7 +58,7 @@ backups:
 
 # Glimmung-managed slot origin admin surface. Inbound auth on
 # /api/admin/origins/* validates a k8s ServiceAccount JWT signed by the
-# cluster OIDC issuer below. See nelsong6/glimmung#142.
+# cluster OIDC issuer below. See romaine-life/glimmung#142.
 k8sOidc:
   # AKS OIDC discovery issuer. Same issuer that powers Azure workload
   # identity federation for AKS — the cluster API server signs SA tokens
@@ -73,13 +73,13 @@ k8sOidc:
   adminAudience: "https://auth.romaine.life"
   # Allowed (namespace, serviceAccount) callers, comma-separated.
   # Glimmung's deployment runs as `infra-shared` in the `glimmung`
-  # namespace (see nelsong6/glimmung k8s/values.yaml: `serviceAccount:
+  # namespace (see romaine-life/glimmung k8s/values.yaml: `serviceAccount:
   # infra-shared`).
   adminSaAllowlist: "glimmung/infra-shared"
   # Service-principal exchange (/api/auth/exchange/k8s). Session pods
   # mint a projected SA token with this audience and POST it here to
   # receive an auth.romaine.life JWT with role=service. See
-  # nelsong6/tank-operator#486.
+  # romaine-life/tank-operator#486.
   serviceAudience: "https://auth.romaine.life"
   # Allowed (namespace, serviceAccount) callers for the service path.
   # - Tank-operator session pods run as `claude-session` in the

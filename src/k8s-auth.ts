@@ -6,10 +6,10 @@
 //
 // Two callers today:
 //   1. /api/admin/origins/* — glimmung's reconciler writes here. SA tokens
-//      come from glimmung's projected token mount. See nelsong6/glimmung#142.
+//      come from glimmung's projected token mount. See romaine-life/glimmung#142.
 //   2. /api/auth/exchange/k8s — tank-operator session pods exchange their
 //      projected SA token here for an auth.romaine.life service-principal
-//      JWT. See nelsong6/tank-operator#486.
+//      JWT. See romaine-life/tank-operator#486.
 //
 // Both callers use the same RS256+JWKS+allowlist verification path; what
 // differs is the audience pin and the allowlist contents. `verifyK8sSAToken`

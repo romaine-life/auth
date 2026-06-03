@@ -8,7 +8,7 @@ Same shape as tank-operator's PodMonitor (k8s/templates/podmonitor-*).
 The kube-prometheus-stack in the `monitoring` namespace picks this up
 via its default release-label selector.
 
-Stage 5 completion for the auth side of nelsong6/tank-operator#486.
+Stage 5 completion for the auth side of romaine-life/tank-operator#486.
 */}}
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor

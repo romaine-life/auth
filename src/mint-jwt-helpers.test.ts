@@ -251,7 +251,7 @@ test("REQUIRED_CLAIMS and ALLOWED_ROLES are pinned by literal name list", () => 
   // verifier contract should be a code review event, not a silent
   // re-alignment. If you change either set, also update:
   //   - nelsong6/romaine-auth-py (require, ALLOWED_ROLES)
-  //   - nelsong6/mcp-github → src/mcp_github/auth_romaine.py (require)
+  //   - romaine-life/mcp-github → src/mcp_github/auth_romaine.py (require)
   assert.deepStrictEqual(REQUIRED_CLAIMS, ["exp", "iat", "iss", "role"]);
   assert.deepStrictEqual(ALLOWED_ROLES, ["admin", "user", "service"]);
 });

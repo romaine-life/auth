@@ -4,7 +4,7 @@
 // that stamps the required-claim set asserted by the platform-wide
 // verifier contract (REQUIRED_CLAIMS = ["exp", "iat", "iss", "role"]
 // in nelsong6/romaine-auth-py and duplicated in
-// nelsong6/mcp-github → auth_romaine.py).
+// romaine-life/mcp-github → auth_romaine.py).
 //
 // History: before this guard, two mint sites composed payloads
 // independently. The admin bot-token site stamped iat explicitly;

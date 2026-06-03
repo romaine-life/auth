@@ -13,7 +13,7 @@ which is all the exchange handler does. Adding a new consumer namespace
 requires an entry in values.yaml here plus a matching route in
 src/service-consumers.ts — both required by construction.
 
-See nelsong6/tank-operator#486.
+See romaine-life/tank-operator#486.
 */}}
 {{- range .Values.k8sOidc.serviceConsumerNamespaces }}
 ---

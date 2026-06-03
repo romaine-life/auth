@@ -5,7 +5,7 @@ import { extractLineage } from "./k8s-pod.js";
 // extractLineage is the pure half of the k8s pod lookup — exercises the
 // annotation contract without standing up an in-cluster API server. The
 // HTTP-fetching half is covered end-to-end by tank-operator's integration
-// path once Stage 4 lands (see nelsong6/tank-operator#486).
+// path once Stage 4 lands (see romaine-life/tank-operator#486).
 
 test("extractLineage: returns both annotations when present", () => {
   const result = extractLineage(

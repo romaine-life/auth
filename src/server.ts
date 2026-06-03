@@ -115,7 +115,7 @@ app.get("/metrics", async (c) => {
 // caller's projected k8s SA token (RS256, signed by the AKS OIDC issuer),
 // validated against the (namespace, serviceAccount) allowlist.
 //
-// See nelsong6/glimmung#142 for the cross-repo contract.
+// See romaine-life/glimmung#142 for the cross-repo contract.
 //
 // In TEST_MODE we skip registration entirely — test slots have no DB and
 // no inbound writers; a 404 is the correct surface there.
@@ -221,7 +221,7 @@ if (process.env.TEST_MODE !== "true") {
   // specific route wins. Body is empty — the token is the entirety of
   // the input. Response shape mirrors the JWT plugin's getToken.
   //
-  // See nelsong6/tank-operator#486.
+  // See romaine-life/tank-operator#486.
   app.post("/api/auth/exchange/k8s", async (c) => {
     const header = c.req.header("Authorization");
     if (!header || !header.startsWith("Bearer ")) {
@@ -1892,7 +1892,7 @@ function footer() {
       <div class="footer-links">
         <a href="/api/auth/jwks">/api/auth/jwks</a>
         <a href="/api/auth/get-session">/api/auth/get-session</a>
-        <a href="https://github.com/nelsong6/auth">source</a>
+        <a href="https://github.com/romaine-life/auth">source</a>
       </div>
       <div class="footer-sigil">NEXUS-7 · BUILD ${BUILD}</div>
     </div>

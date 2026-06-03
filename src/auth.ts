@@ -30,7 +30,7 @@ const fromEnv = (key: string): string =>
 //   1. `PROD_TRUSTED_ORIGINS` (below): auth.romaine.life's known peer apps,
 //      shipped as static config.
 //   2. `managed_origin` table: per-project slot wildcards reconciled by
-//      glimmung. See nelsong6/glimmung#142 for the cross-repo contract.
+//      glimmung. See romaine-life/glimmung#142 for the cross-repo contract.
 //
 // `trustedOrigins` is registered as a function so the union is rebuilt at
 // request time. `getManagedOrigins` caches DB reads for 60s in-process, so
@@ -49,7 +49,7 @@ const PROD_TRUSTED_ORIGINS = [
   "https://glimmung.romaine.life",
   // Per-project slot wildcards under `.dev.romaine.life` do not belong
   // in this list — they are reconciled into the managed_origin table
-  // by glimmung. See nelsong6/glimmung#142, and the CI gate at
+  // by glimmung. See romaine-life/glimmung#142, and the CI gate at
   // scripts/check-static-slot-origins.mjs that enforces this.
   "http://localhost:5173",
   "http://localhost:5500",
@@ -106,7 +106,7 @@ export const auth = betterAuth({
       // /api/auth/exchange/k8s (see src/service-exchange.ts). Apps that
       // accept service callers gate explicitly on role=service so a
       // human role and a service role can never share a route by
-      // accident. See nelsong6/tank-operator#486.
+      // accident. See romaine-life/tank-operator#486.
       role: { type: "string", defaultValue: "pending" },
       // JSON blob for per-app preferences. Apps namespace under their own key,
       // e.g. apps.kill-me = { tdee: 2200 }. Apps that need richer per-user data
