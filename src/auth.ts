@@ -45,12 +45,14 @@ const PROD_TRUSTED_ORIGINS = [
   "https://investing.romaine.life",
   "https://diagrams.romaine.life",
   "https://tank.romaine.life",
+  "https://chess.romaine.life",
   "https://fzt-frontend.romaine.life",
   "https://glimmung.romaine.life",
   // Per-project slot wildcards under `.dev.romaine.life` do not belong
   // in this list — they are reconciled into the managed_origin table
   // by glimmung. See romaine-life/glimmung#142, and the CI gate at
   // scripts/check-static-slot-origins.mjs that enforces this.
+  "http://localhost:3000",
   "http://localhost:5173",
   "http://localhost:5500",
 ];
