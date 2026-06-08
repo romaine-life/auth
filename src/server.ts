@@ -3174,7 +3174,7 @@ function copySetCookies(from: Response, to: Response): void {
 // here with their post-sign-in URL and the user gets redirected back to
 // the app after the provider completes. Better Auth validates callbackURL
 // against `trustedOrigins` in auth.ts — passing an unlisted origin throws.
-async function socialSignInRedirect(c: Context, provider: "microsoft" | "google", callbackURL: string) {
+async function socialSignInRedirect(c: Context, provider: "microsoft" | "google", callbackURL: string, prompt?: string) {
   try {
     const authRes = await auth.api.signInSocial({
       body: { provider, callbackURL },
@@ -3190,7 +3190,17 @@ async function socialSignInRedirect(c: Context, provider: "microsoft" | "google"
       console.error(`[sign-in:${provider}] better-auth response missing url`, data);
       return c.text("sign-in failed", 500);
     }
-    const redirect = new Response(null, { status: 302, headers: { Location: data.url } });
+    let redirectUrl = data.url;
+    if (prompt) {
+      try {
+        const parsedUrl = new URL(redirectUrl);
+        parsedUrl.searchParams.set("prompt", prompt);
+        redirectUrl = parsedUrl.toString();
+      } catch (err) {
+        console.error(`[sign-in:${provider}] failed to append prompt to redirect url:`, err);
+      }
+    }
+    const redirect = new Response(null, { status: 302, headers: { Location: redirectUrl } });
     copySetCookies(authRes, redirect);
     return redirect;
   } catch (err) {
@@ -3233,17 +3243,23 @@ async function signOutCallbackURL(c: Context): Promise<string> {
   return trustedCallbackURL(callbackURL, "/");
 }
 
-app.post("/sign-in/microsoft", (c) =>
-  TEST_MODE ? testSignIn(c, "/") : socialSignInRedirect(c, "microsoft", "/"));
+app.post("/sign-in/microsoft", (c) => {
+  const prompt = c.req.query("prompt");
+  return TEST_MODE ? testSignIn(c, "/") : socialSignInRedirect(c, "microsoft", "/", prompt);
+});
 app.get("/sign-in/microsoft", (c) => {
   const callbackURL = c.req.query("callbackURL") ?? "/";
-  return TEST_MODE ? testSignIn(c, callbackURL) : socialSignInRedirect(c, "microsoft", callbackURL);
+  const prompt = c.req.query("prompt");
+  return TEST_MODE ? testSignIn(c, callbackURL) : socialSignInRedirect(c, "microsoft", callbackURL, prompt);
 });
-app.post("/sign-in/google", (c) =>
-  TEST_MODE ? testSignIn(c, "/") : socialSignInRedirect(c, "google", "/"));
+app.post("/sign-in/google", (c) => {
+  const prompt = c.req.query("prompt");
+  return TEST_MODE ? testSignIn(c, "/") : socialSignInRedirect(c, "google", "/", prompt);
+});
 app.get("/sign-in/google", (c) => {
   const callbackURL = c.req.query("callbackURL") ?? "/";
-  return TEST_MODE ? testSignIn(c, callbackURL) : socialSignInRedirect(c, "google", callbackURL);
+  const prompt = c.req.query("prompt");
+  return TEST_MODE ? testSignIn(c, callbackURL) : socialSignInRedirect(c, "google", callbackURL, prompt);
 });
 
 app.post("/sign-out", async (c) => {
