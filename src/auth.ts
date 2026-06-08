@@ -88,6 +88,7 @@ export const auth = betterAuth({
       clientId: fromEnv("MICROSOFT_CLIENT_ID"),
       clientSecret: fromEnv("MICROSOFT_CLIENT_SECRET"),
       tenantId: "common",
+      prompt: "select_account",
     },
     google: {
       clientId: fromEnv("GOOGLE_CLIENT_ID"),
