@@ -28,9 +28,10 @@ investing, house-hunt, and fzt-frontend.
 - `GET  /api/ssh/ca` — the SSH CA **public** key as a `TrustedUserCAKeys` line (unauthenticated; a CA public key is published-by-design). 404 when the CA is unconfigured
 - `POST /admin/bot-tokens` — admin-only: mint a 24h bot token (`role=admin`, `purpose=bot`) for break-glass CLI / curl use
 - `POST /admin/service-tokens` — admin-only: mint a 24h service token (`role=service`, `purpose=bot`, `actor_email=<admin>`) for calling service-only MCPs (e.g. `mcp-github`) from a workstation
+- `POST /admin/git-break-glass/grants` — admin-only: approve a Tank session/repo git break-glass grant from an auth.romaine.life approval URL. The service JWT used to call Tank is minted server-side and never returned to the browser
 - `POST /api/cli/device` + `POST /api/cli/token` — browser-approved CLI/device flow for minting the same 24h bot token without copying an auth cookie
 - `GET /api/auth/cli/user-login` + `POST /api/auth/cli/user-token` — native-desktop sign-in flow (RFC 8252, PKCE + loopback). The user signs in normally with Microsoft/Google in the browser; a native app on the same machine receives the user's own JWT (`role=user|admin`, no `purpose=bot`) via a one-time code redeemed at the token endpoint. No admin approval — the user IS the requester. First consumer: `romaine-life/shows`'s `desktop/`.
-- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, `auth_federation_exchange_total{result}`, `auth_ssh_cert_exchange_total{result}`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
+- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, `auth_admin_git_break_glass_grants_total`, `auth_federation_exchange_total{result}`, `auth_ssh_cert_exchange_total{result}`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
 
@@ -217,6 +218,42 @@ label-free, same posture as the bot-token counter). A separate
 `console.warn` line per mint carries the admin's email and the issued
 `actor_email` (equal today, kept explicit so a future decoupling
 surfaces in the log diff).
+
+## Tank git break-glass approvals
+
+Tank's governed git tools expose a constrained break-glass request before the
+privileged git tools are visible to an agent. The request URL lands on
+`https://auth.romaine.life/admin?intent=git-break-glass&session_id=...&repo=...`.
+When an admin opens that URL, the admin console renders a one-off approval card
+for that session/repo.
+
+Flow:
+
+1. The agent calls Tank's break-glass request tool and receives only an auth
+   approval URL.
+2. An admin signs in to `/admin` and clicks **Approve git break-glass**.
+3. auth mints a 15-minute internal `role=service` JWT with
+   `actor_email=<admin email>` and `purpose=tank_git_break_glass`.
+4. auth POSTs to Tank's internal
+   `/api/internal/sessions/{session_id}/git-break-glass/grants` endpoint with
+   the requested repo, operations, request event id, and grant TTL.
+5. The agent calls the Tank request tool again; Tank now exposes the privileged
+   git MCP surface for that repo/session until the grant expires.
+
+The browser never receives the service JWT or a git token. The grant itself is
+stored as a Tank control-action event, scoped to the Tank session and repo, and
+defaults to one hour. `session_scope` is optional in the URL: omitted means the
+production Tank service, while `tank-operator-slot-N` routes to that native test
+slot's in-cluster service without accepting arbitrary callback URLs.
+
+Configuration: `TANK_OPERATOR_INTERNAL_URL` points auth at the production Tank
+service and defaults to `http://tank-operator.tank-operator.svc.cluster.local`.
+Slot approvals derive the internal URL from the bounded `session_scope` instead.
+
+Observability: `auth_admin_git_break_glass_grants_total` tracks approved grants
+as a label-free rare-event counter. The structured `console.warn` line carries
+the admin email, session id, session scope, repo, request event id, operations,
+and TTL.
 
 ## CLI-approved bot-token flow
 

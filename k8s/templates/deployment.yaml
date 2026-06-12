@@ -97,6 +97,12 @@ spec:
               value: {{ .Values.k8sOidc.serviceAudience | quote }}
             - name: K8S_SERVICE_SA_ALLOWLIST
               value: {{ .Values.k8sOidc.serviceSaAllowlist | quote }}
+            # Admin-approved Tank git break-glass grants. The auth admin
+            # console mints a short-lived role=service JWT internally and
+            # calls Tank's internal grant endpoint; no git credential is
+            # returned to the browser.
+            - name: TANK_OPERATOR_INTERNAL_URL
+              value: {{ .Values.tankOperator.internalURL | quote }}
             # External-audience federation exchange
             # (/api/auth/exchange/federation). Workloads here mint
             # auth.romaine.life-signed JWTs scoped to a third-party
