@@ -17,6 +17,28 @@ test("parseGitBreakGlassIntent ignores non-break-glass admin visits", () => {
 });
 
 test("parseGitBreakGlassIntent validates and defaults the approval request", () => {
+  const params = new URLSearchParams({
+    intent: "git-break-glass",
+    session_id: "47",
+    repo_scope: JSON.stringify({ kind: "current_repo", repo: "romaine-life/tank-operator" }),
+    branch_scope: JSON.stringify({ kind: "named", branches: ["refs/heads/repair"] }),
+    reason: "need push",
+  });
+  const parsed = parseGitBreakGlassIntent(
+    params,
+  );
+  assert.equal(parsed.present, true);
+  if (!parsed.present || !parsed.ok) throw new Error("expected valid intent");
+  assert.equal(parsed.sessionId, "47");
+  assert.deepStrictEqual(parsed.repoScope, { kind: "current_repo", repo: "romaine-life/tank-operator" });
+  assert.deepStrictEqual(parsed.branchScope, { kind: "named", branches: ["repair"] });
+  assert.equal(parsed.sessionScope, "default");
+  assert.equal(parsed.reason, "need push");
+  assert.equal(parsed.ttlSeconds, 3600);
+  assert.deepStrictEqual(parsed.operations, ["mint_full_git_token", "push_current_head"]);
+});
+
+test("parseGitBreakGlassIntent accepts legacy repo-only approval URLs as current repo unlimited", () => {
   const parsed = parseGitBreakGlassIntent(
     new URLSearchParams(
       "intent=git-break-glass&session_id=47&repo=romaine-life%2Ftank-operator&reason=need+push",
@@ -24,23 +46,40 @@ test("parseGitBreakGlassIntent validates and defaults the approval request", () 
   );
   assert.equal(parsed.present, true);
   if (!parsed.present || !parsed.ok) throw new Error("expected valid intent");
-  assert.equal(parsed.sessionId, "47");
-  assert.equal(parsed.repo, "romaine-life/tank-operator");
-  assert.equal(parsed.sessionScope, "default");
-  assert.equal(parsed.reason, "need push");
-  assert.equal(parsed.ttlSeconds, 3600);
-  assert.deepStrictEqual(parsed.operations, ["mint_full_git_token", "push_current_head"]);
+  assert.deepStrictEqual(parsed.repoScope, { kind: "current_repo", repo: "romaine-life/tank-operator" });
+  assert.deepStrictEqual(parsed.branchScope, { kind: "unlimited" });
 });
 
 test("parseGitBreakGlassGrantRequest rejects arbitrary session scopes", () => {
   const parsed = parseGitBreakGlassGrantRequest({
     session_id: "47",
-    repo: "romaine-life/tank-operator",
+    repo_scope: { kind: "current_repo", repo: "romaine-life/tank-operator" },
+    branch_scope: { kind: "unlimited" },
     session_scope: "http://metadata.google.internal",
   });
   assert.equal(parsed.present, true);
   if (!parsed.present || parsed.ok) throw new Error("expected invalid request");
   assert.match(parsed.error, /session_scope/);
+});
+
+test("parseGitBreakGlassGrantRequest rejects conflicting scoped options", () => {
+  const invalidRepo = parseGitBreakGlassGrantRequest({
+    session_id: "47",
+    repo_scope: { kind: "all_repos", repo: "romaine-life/tank-operator" },
+    branch_scope: { kind: "unlimited" },
+  });
+  assert.equal(invalidRepo.present, true);
+  if (!invalidRepo.present || invalidRepo.ok) throw new Error("expected invalid repo scope");
+  assert.match(invalidRepo.error, /all_repos rejects repo/);
+
+  const invalidBranch = parseGitBreakGlassGrantRequest({
+    session_id: "47",
+    repo_scope: { kind: "current_repo", repo: "romaine-life/tank-operator" },
+    branch_scope: { kind: "unlimited", branches: ["docs"] },
+  });
+  assert.equal(invalidBranch.present, true);
+  if (!invalidBranch.present || invalidBranch.ok) throw new Error("expected invalid branch scope");
+  assert.match(invalidBranch.error, /unlimited rejects branches/);
 });
 
 test("buildTankOperatorInternalURL routes default and slot scopes without arbitrary URLs", () => {
@@ -79,7 +118,8 @@ test("approveGitBreakGlassGrant posts the bounded grant body to tank", async () 
     tankOperatorInternalURL: "http://tank.local",
     serviceToken: "service-token",
     sessionId: "47",
-    repo: "romaine-life/tank-operator",
+    repoScope: { kind: "repos", repos: ["romaine-life/tank-operator", "romaine-life/auth"] },
+    branchScope: { kind: "count", count: 5 },
     sessionScope: "default",
     reason: "requested from auth",
     requestEventId: "request-1",
@@ -96,7 +136,8 @@ test("approveGitBreakGlassGrant posts the bounded grant body to tank", async () 
   );
   assert.equal((calls[0].init.headers as Record<string, string>).Authorization, "Bearer service-token");
   assert.deepStrictEqual(JSON.parse(String(calls[0].init.body)), {
-    repo: "romaine-life/tank-operator",
+    repo_scope: { kind: "repos", repos: ["romaine-life/tank-operator", "romaine-life/auth"] },
+    branch_scope: { kind: "count", count: 5 },
     ttl_seconds: 900,
     operations: ["push_current_head"],
     request_event_id: "request-1",
@@ -117,7 +158,8 @@ test("approveGitBreakGlassGrant surfaces tank errors", async () => {
         tankOperatorInternalURL: "http://tank.local",
         serviceToken: "bad-token",
         sessionId: "47",
-        repo: "romaine-life/tank-operator",
+        repoScope: { kind: "current_repo", repo: "romaine-life/tank-operator" },
+        branchScope: { kind: "unlimited" },
         sessionScope: "default",
         reason: "",
         requestEventId: "",
