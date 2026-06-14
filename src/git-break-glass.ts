@@ -166,6 +166,7 @@ export async function approveGitBreakGlassGrant(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
+      repo: legacyRepoForTank(input.repoScope),
       repo_scope: input.repoScope,
       branch_scope: input.branchScope,
       ttl_seconds: input.ttlSeconds,
@@ -183,6 +184,17 @@ export async function approveGitBreakGlassGrant(
     );
   }
   return body;
+}
+
+function legacyRepoForTank(scope: GitBreakGlassRepoScope): string {
+  switch (scope.kind) {
+    case "current_repo":
+      return scope.repo;
+    case "repos":
+      return scope.repos[0] ?? "";
+    case "all_repos":
+      return "";
+  }
 }
 
 export function gitBreakGlassRepoScopeLabel(scope: GitBreakGlassRepoScope): string {

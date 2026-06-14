@@ -136,6 +136,7 @@ test("approveGitBreakGlassGrant posts the bounded grant body to tank", async () 
   );
   assert.equal((calls[0].init.headers as Record<string, string>).Authorization, "Bearer service-token");
   assert.deepStrictEqual(JSON.parse(String(calls[0].init.body)), {
+    repo: "romaine-life/tank-operator",
     repo_scope: { kind: "repos", repos: ["romaine-life/tank-operator", "romaine-life/auth"] },
     branch_scope: { kind: "count", count: 5 },
     ttl_seconds: 900,
