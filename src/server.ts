@@ -52,6 +52,7 @@ import { mintAuthJwt } from "./mint-jwt.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
 import {
   recordAdminBotTokenMint,
+  recordAdminAzureBreakGlassGrant,
   recordAdminGitBreakGlassGrant,
   recordAdminOrigins,
   recordAdminServiceTokenMint,
@@ -71,6 +72,14 @@ import {
   parseGitBreakGlassIntent,
   type GitBreakGlassIntent,
 } from "./git-break-glass.js";
+import {
+  AzureBreakGlassApprovalError,
+  AZURE_BREAK_GLASS_TTL_SECONDS,
+  approveAzureBreakGlassGrant,
+  parseAzureBreakGlassGrantRequest,
+  parseAzureBreakGlassIntent,
+  type AzureBreakGlassIntent,
+} from "./azure-break-glass.js";
 import { type JSONWebKeySet } from "jose";
 import { verifyAdminBearerJwt } from "./admin-bearer.js";
 
@@ -1924,6 +1933,61 @@ const ADMIN_GIT_BREAK_GLASS_SCRIPT = raw(`
 })();
 `);
 
+const ADMIN_AZURE_BREAK_GLASS_SCRIPT = raw(`
+(() => {
+  const card = document.getElementById("azure-break-glass-card");
+  if (!card) return;
+  const btn = document.getElementById("approve-azure-break-glass");
+  const result = document.getElementById("azure-break-glass-result");
+  const meta = document.getElementById("azure-break-glass-meta");
+  const err = document.getElementById("azure-break-glass-error");
+  if (!btn || !result || !meta || !err) return;
+
+  const operations = () => {
+    try {
+      const parsed = JSON.parse(card.dataset.operations || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  };
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    err.style.display = "none";
+    err.textContent = "";
+    result.style.display = "none";
+    try {
+      const res = await fetch("/admin/azure-break-glass/grants", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: card.dataset.sessionId || "",
+          session_scope: card.dataset.sessionScope || "default",
+          reason: card.dataset.reason || "",
+          request_event_id: card.dataset.requestEventId || "",
+          operations: operations(),
+          ttl_seconds: Number(card.dataset.ttlSeconds || "3600"),
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        throw new Error(body.error || body.detail || ("HTTP " + res.status));
+      }
+      const grant = body.tank || body;
+      meta.textContent = "approved azure-personal for session " + (grant.session_id || card.dataset.sessionId || "") + " until " + (grant.expires_at || "expiry unknown");
+      result.style.display = "";
+    } catch (e) {
+      err.textContent = "approval failed: " + (e && e.message ? e.message : String(e));
+      err.style.display = "";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+`);
+
 // ── HTML helpers ──────────────────────────────────────────────────────────
 
 const SHELL = (title: string, body: ReturnType<typeof html>) => html`<!DOCTYPE html>
@@ -2436,6 +2500,68 @@ function gitBreakGlassApprovalSection(intent: GitBreakGlassIntent) {
   `;
 }
 
+function azureBreakGlassApprovalSection(intent: AzureBreakGlassIntent) {
+  if (!intent.present) return html``;
+  if (!intent.ok) {
+    return html`
+      <section class="section col-span-2">
+        <div class="section-head">
+          <span class="title"><span class="sigil">//</span>Azure break-glass</span>
+          <span class="count">invalid request</span>
+        </div>
+        <div class="section-body">
+          <div class="admin-card">
+            <p class="bot-token-lede">${intent.error}</p>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+  return html`
+    <section class="section col-span-2">
+      <div class="section-head">
+        <span class="title"><span class="sigil">//</span>Azure break-glass</span>
+        <span class="count">${Math.round(intent.ttlSeconds / 60)}m grant</span>
+      </div>
+      <div class="section-body">
+        <div
+          class="admin-card"
+          id="azure-break-glass-card"
+          data-session-id="${intent.sessionId}"
+          data-session-scope="${intent.sessionScope}"
+          data-reason="${intent.reason}"
+          data-request-event-id="${intent.requestEventId}"
+          data-operations="${JSON.stringify(intent.operations)}"
+          data-ttl-seconds="${intent.ttlSeconds}"
+        >
+          <div class="admin-head">
+            <span class="email">azure-personal</span>
+            <span class="since">${intent.sessionScope} / session ${intent.sessionId}</span>
+          </div>
+          <p class="bot-token-lede">
+            Approve the Tank azure-personal break-glass request for this session.
+            auth will mint a short-lived service JWT internally, call Tank's grant
+            endpoint, and return only the grant status here. This unlocks the whole
+            azure-personal MCP for the session until the grant expires.
+          </p>
+          ${intent.reason
+            ? html`<p class="bot-token-lede"><code>reason</code> ${intent.reason}</p>`
+            : html``}
+          <div class="admin-actions">
+            <button class="admin-btn" id="approve-azure-break-glass" type="button">
+              Approve azure break-glass
+            </button>
+          </div>
+          <div class="bot-token-result" id="azure-break-glass-result" style="display:none">
+            <div class="bot-token-meta" id="azure-break-glass-meta"></div>
+          </div>
+          <div class="bot-token-error" id="azure-break-glass-error" style="display:none"></div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 app.get("/admin", async (c) => {
   const gate = await requireAdmin(c);
   if ("status" in gate) {
@@ -2445,6 +2571,7 @@ app.get("/admin", async (c) => {
   const users = TEST_MODE ? TEST_USERS : await db.select().from(user).orderBy(desc(user.createdAt));
   const flash = c.req.query("ok") ?? (TEST_MODE ? "test mode · changes are discarded" : null);
   const gitBreakGlassIntent = parseGitBreakGlassIntent(new URL(c.req.url).searchParams);
+  const azureBreakGlassIntent = parseAzureBreakGlassIntent(new URL(c.req.url).searchParams);
   return c.html(SHELL("Tyrell Console — Subjects", html`
     ${topbar("online")}
     <main class="main">
@@ -2467,6 +2594,7 @@ app.get("/admin", async (c) => {
         ${flash ? html`<div class="admin-flash">${flash}</div>` : html``}
 
         ${gitBreakGlassApprovalSection(gitBreakGlassIntent)}
+        ${azureBreakGlassApprovalSection(azureBreakGlassIntent)}
 
         <section class="section col-span-2">
           <div class="section-head">
@@ -2597,6 +2725,7 @@ app.get("/admin", async (c) => {
     </main>
     ${footer()}
     <script>${ADMIN_GIT_BREAK_GLASS_SCRIPT}</script>
+    <script>${ADMIN_AZURE_BREAK_GLASS_SCRIPT}</script>
     <script>${ADMIN_BOT_TOKEN_SCRIPT}</script>
     <script>${ADMIN_SERVICE_TOKEN_SCRIPT}</script>
   `));
@@ -2880,6 +3009,113 @@ app.post("/admin/git-break-glass/grants", async (c) => {
       actor_email: u.email,
       repo_scope: parsed.repoScope,
       branch_scope: parsed.branchScope,
+      session_id: parsed.sessionId,
+      session_scope: parsed.sessionScope,
+      request_event_id: parsed.requestEventId,
+      operations: parsed.operations,
+      ttl_seconds: parsed.ttlSeconds,
+    }),
+  );
+
+  return c.json({
+    status: "approved",
+    tank: tankResponse,
+  });
+});
+
+app.post("/admin/azure-break-glass/grants", async (c) => {
+  const gate = await requireAdmin(c);
+  if ("status" in gate) {
+    return c.json({ error: "admin only" }, gate.status === 302 ? 401 : 403);
+  }
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const parsed = parseAzureBreakGlassGrantRequest(body);
+  if (!parsed.present || !parsed.ok) {
+    return c.json({ error: parsed.present ? parsed.error : "invalid request" }, 400);
+  }
+
+  const u = gate.user as typeof gate.user & { role?: string; apps?: string };
+  if (TEST_MODE) {
+    recordAdminAzureBreakGlassGrant();
+    return c.json({
+      status: "approved",
+      tank: {
+        active: true,
+        event_id: "test-mode-azure-break-glass-grant",
+        resource: "azure-personal",
+        expires_at: new Date(Date.now() + AZURE_BREAK_GLASS_TTL_SECONDS * 1000).toISOString(),
+        operations: parsed.operations,
+        session_id: parsed.sessionId,
+        session_scope: parsed.sessionScope,
+      },
+    });
+  }
+
+  let signed;
+  try {
+    signed = await mintAuthJwt({
+      sub: u.id || u.email,
+      email: u.email,
+      name: u.name,
+      role: "service",
+      apps: {},
+      actorEmail: u.email,
+      purpose: "tank_azure_break_glass",
+      ttlSeconds: GIT_BREAK_GLASS_SERVICE_TOKEN_TTL_SECONDS,
+    });
+  } catch (e) {
+    console.error("[/admin/azure-break-glass/grants] mintAuthJwt failed:", e);
+    return c.json({ error: "failed to mint service token" }, 500);
+  }
+
+  const tankOperatorInternalURL = buildTankOperatorInternalURL(
+    process.env.TANK_OPERATOR_INTERNAL_URL,
+    parsed.sessionScope,
+  );
+  let tankResponse;
+  try {
+    tankResponse = await approveAzureBreakGlassGrant({
+      ...parsed,
+      tankOperatorInternalURL,
+      serviceToken: signed.token,
+    });
+  } catch (e) {
+    if (e instanceof AzureBreakGlassApprovalError) {
+      console.error(
+        "[/admin/azure-break-glass/grants] tank grant failed:",
+        JSON.stringify({
+          email: u.email,
+          session_id: parsed.sessionId,
+          session_scope: parsed.sessionScope,
+          status: e.status,
+          upstream_body: e.upstreamBody,
+        }),
+      );
+      return c.json(
+        {
+          error: "tank grant failed",
+          upstream_status: e.status,
+          upstream_body: e.upstreamBody,
+        },
+        502,
+      );
+    }
+    console.error("[/admin/azure-break-glass/grants] tank grant failed:", e);
+    return c.json({ error: "tank grant failed" }, 502);
+  }
+
+  recordAdminAzureBreakGlassGrant();
+  console.warn(
+    "[/admin/azure-break-glass/grants] approved:",
+    JSON.stringify({
+      email: u.email,
+      actor_email: u.email,
       session_id: parsed.sessionId,
       session_scope: parsed.sessionScope,
       request_event_id: parsed.requestEventId,
