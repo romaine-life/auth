@@ -106,30 +106,6 @@ export function recordAdminServiceTokenMint(): void {
   authAdminServiceTokensMintedTotal.inc();
 }
 
-// Admin-approved Tank git break-glass grants. This is intentionally
-// label-free like the bot/service token mint counters: per-request
-// identity and repo live in the structured audit log line, while the
-// metric tracks rare-event volume without unbounded labels.
-export const authAdminGitBreakGlassGrantsTotal = new Counter({
-  name: "auth_admin_git_break_glass_grants_total",
-  help: "Tank git break-glass grants approved from the auth admin console.",
-  registers: [registry],
-});
-
-export function recordAdminGitBreakGlassGrant(): void {
-  authAdminGitBreakGlassGrantsTotal.inc();
-}
-
-export const authAdminAzureBreakGlassGrantsTotal = new Counter({
-  name: "auth_admin_azure_break_glass_grants_total",
-  help: "Tank azure break-glass grants approved from the auth admin console.",
-  registers: [registry],
-});
-
-export function recordAdminAzureBreakGlassGrant(): void {
-  authAdminAzureBreakGlassGrantsTotal.inc();
-}
-
 // External-audience federation exchange (/api/auth/exchange/federation).
 // Same shape as the service-exchange counter — bounded label set drawn
 // from FederationFailureReason in src/federation-exchange.ts plus a
