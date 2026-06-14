@@ -120,6 +120,16 @@ export function recordAdminGitBreakGlassGrant(): void {
   authAdminGitBreakGlassGrantsTotal.inc();
 }
 
+export const authAdminAzureBreakGlassGrantsTotal = new Counter({
+  name: "auth_admin_azure_break_glass_grants_total",
+  help: "Tank azure break-glass grants approved from the auth admin console.",
+  registers: [registry],
+});
+
+export function recordAdminAzureBreakGlassGrant(): void {
+  authAdminAzureBreakGlassGrantsTotal.inc();
+}
+
 // External-audience federation exchange (/api/auth/exchange/federation).
 // Same shape as the service-exchange counter — bounded label set drawn
 // from FederationFailureReason in src/federation-exchange.ts plus a
