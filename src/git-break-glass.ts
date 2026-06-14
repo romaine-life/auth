@@ -15,9 +15,20 @@ const GITHUB_REPO_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,10
 const SESSION_SCOPE_PATTERN = /^tank-operator-slot-[1-9][0-9]*$/;
 const REQUEST_EVENT_ID_PATTERN = /^[A-Za-z0-9._:-]{0,200}$/;
 
+export type GitBreakGlassRepoScope =
+  | { kind: "current_repo"; repo: string }
+  | { kind: "repos"; repos: string[] }
+  | { kind: "all_repos" };
+
+export type GitBreakGlassBranchScope =
+  | { kind: "named"; branches: string[] }
+  | { kind: "count"; count: number }
+  | { kind: "unlimited" };
+
 export interface GitBreakGlassGrantRequest {
   sessionId: string;
-  repo: string;
+  repoScope: GitBreakGlassRepoScope;
+  branchScope: GitBreakGlassBranchScope;
   sessionScope: string;
   reason: string;
   requestEventId: string;
@@ -47,6 +58,8 @@ export function parseGitBreakGlassIntent(params: URLSearchParams): GitBreakGlass
   return parseGitBreakGlassGrantRequest({
     session_id: params.get("session_id") ?? "",
     repo: params.get("repo") ?? "",
+    repo_scope: params.get("repo_scope") ?? "",
+    branch_scope: params.get("branch_scope") ?? "",
     session_scope: params.get("session_scope") ?? "",
     reason: params.get("reason") ?? "",
     request_event_id: params.get("request_event_id") ?? "",
@@ -65,13 +78,19 @@ export function parseGitBreakGlassGrantRequest(input: unknown): GitBreakGlassInt
     return { present: true, ok: false, error: "session_id is required" };
   }
 
-  const repo = stringField(raw, "repo").trim();
-  if (!GITHUB_REPO_PATTERN.test(repo)) {
-    return {
-      present: true,
-      ok: false,
-      error: "repo must be a GitHub slug like owner/name",
-    };
+  let repoScope: GitBreakGlassRepoScope;
+  try {
+    repoScope = normalizeRepoScope(parseObjectField(raw, "repo_scope", "repoScope"), stringField(raw, "repo"));
+  } catch (err) {
+    return { present: true, ok: false, error: err instanceof Error ? err.message : "repo_scope is invalid" };
+  }
+
+  const legacyRepo = stringField(raw, "repo").trim();
+  let branchScope: GitBreakGlassBranchScope;
+  try {
+    branchScope = normalizeBranchScope(parseObjectField(raw, "branch_scope", "branchScope"), legacyRepo);
+  } catch (err) {
+    return { present: true, ok: false, error: err instanceof Error ? err.message : "branch_scope is invalid" };
   }
 
   const sessionScope = normalizeSessionScope(stringField(raw, "session_scope", "sessionScope"));
@@ -97,7 +116,8 @@ export function parseGitBreakGlassGrantRequest(input: unknown): GitBreakGlassInt
     present: true,
     ok: true,
     sessionId,
-    repo,
+    repoScope,
+    branchScope,
     sessionScope,
     reason: clampReason(stringField(raw, "reason")),
     requestEventId,
@@ -146,7 +166,8 @@ export async function approveGitBreakGlassGrant(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      repo: input.repo,
+      repo_scope: input.repoScope,
+      branch_scope: input.branchScope,
       ttl_seconds: input.ttlSeconds,
       operations: input.operations,
       request_event_id: input.requestEventId,
@@ -164,12 +185,166 @@ export async function approveGitBreakGlassGrant(
   return body;
 }
 
+export function gitBreakGlassRepoScopeLabel(scope: GitBreakGlassRepoScope): string {
+  switch (scope.kind) {
+    case "current_repo":
+      return scope.repo;
+    case "repos":
+      return scope.repos.join(", ");
+    case "all_repos":
+      return "all repositories";
+  }
+}
+
+export function gitBreakGlassBranchScopeLabel(scope: GitBreakGlassBranchScope): string {
+  switch (scope.kind) {
+    case "named":
+      return scope.branches.join(", ");
+    case "count":
+      return `${scope.count} branch${scope.count === 1 ? "" : "es"}`;
+    case "unlimited":
+      return "unlimited branches";
+  }
+}
+
 function stringField(raw: Record<string, unknown>, ...names: string[]): string {
   for (const name of names) {
     const value = raw[name];
     if (typeof value === "string") return value;
   }
   return "";
+}
+
+function parseObjectField(raw: Record<string, unknown>, ...names: string[]): unknown {
+  for (const name of names) {
+    const value = raw[name];
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value !== "string") return value;
+    try {
+      return JSON.parse(value);
+    } catch {
+      throw new Error(`${name} must be a JSON object`);
+    }
+  }
+  return undefined;
+}
+
+function normalizeRepoScope(value: unknown, legacyRepo: string): GitBreakGlassRepoScope {
+  if (value === undefined) {
+    return normalizeRepoScope({ kind: "current_repo", repo: legacyRepo }, "");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("repo_scope is required");
+  }
+  const raw = value as Record<string, unknown>;
+  const kind = stringField(raw, "kind").trim();
+  switch (kind) {
+    case "current_repo": {
+      if (hasNonEmptyArray(raw.repos)) throw new Error("repo_scope current_repo rejects repos");
+      const repo = normalizeGitHubRepoSlug(raw.repo);
+      if (!repo) throw new Error("repo_scope current_repo requires repo");
+      return { kind, repo };
+    }
+    case "repos": {
+      if (stringFromUnknown(raw.repo).trim()) throw new Error("repo_scope repos rejects repo");
+      const repos = normalizeGitHubRepoList(raw.repos);
+      if (repos.length === 0) throw new Error("repo_scope repos requires at least one repo");
+      return { kind, repos };
+    }
+    case "all_repos":
+      if (stringFromUnknown(raw.repo).trim() || hasNonEmptyArray(raw.repos)) {
+        throw new Error("repo_scope all_repos rejects repo and repos");
+      }
+      return { kind };
+    default:
+      throw new Error("repo_scope.kind must be current_repo, repos, or all_repos");
+  }
+}
+
+function normalizeBranchScope(value: unknown, legacyRepo: string): GitBreakGlassBranchScope {
+  if (value === undefined && legacyRepo) {
+    return { kind: "unlimited" };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("branch_scope is required");
+  }
+  const raw = value as Record<string, unknown>;
+  const kind = stringField(raw, "kind").trim();
+  const branchesRaw = raw.branches ?? [];
+  const countRaw = raw.count;
+  switch (kind) {
+    case "named": {
+      if (countRaw !== undefined && countRaw !== null && countRaw !== "" && countRaw !== 0) {
+        throw new Error("branch_scope named rejects count");
+      }
+      const branches = normalizeBranchList(branchesRaw);
+      if (branches.length === 0) throw new Error("branch_scope named requires branches");
+      return { kind, branches };
+    }
+    case "count": {
+      if (hasNonEmptyArray(branchesRaw)) throw new Error("branch_scope count rejects branches");
+      const count = parsePositiveInteger(countRaw);
+      if (count <= 0) throw new Error("branch_scope count requires a positive count");
+      return { kind, count: Math.min(count, 50) };
+    }
+    case "unlimited":
+      if (hasNonEmptyArray(branchesRaw) || (countRaw !== undefined && countRaw !== null && countRaw !== "" && countRaw !== 0)) {
+        throw new Error("branch_scope unlimited rejects branches and count");
+      }
+      return { kind };
+    default:
+      throw new Error("branch_scope.kind must be named, count, or unlimited");
+  }
+}
+
+function normalizeGitHubRepoList(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Error("repo_scope.repos must be an array of GitHub slugs");
+  const out: string[] = [];
+  for (const item of value) {
+    const repo = normalizeGitHubRepoSlug(item);
+    if (repo && !out.includes(repo)) out.push(repo);
+  }
+  return out;
+}
+
+function normalizeGitHubRepoSlug(value: unknown): string {
+  const repo = stringFromUnknown(value).trim();
+  if (!repo) return "";
+  if (!GITHUB_REPO_PATTERN.test(repo)) {
+    throw new Error("repo values must be GitHub slugs like owner/name");
+  }
+  return repo;
+}
+
+function normalizeBranchList(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  const out: string[] = [];
+  for (const item of values) {
+    const branch = normalizeBranchName(item);
+    if (branch && !out.includes(branch)) out.push(branch);
+  }
+  return out;
+}
+
+function normalizeBranchName(value: unknown): string {
+  let raw = stringFromUnknown(value).trim();
+  if (raw.startsWith("refs/heads/")) raw = raw.slice("refs/heads/".length);
+  if (raw.includes("/")) raw = raw.slice(raw.lastIndexOf("/") + 1);
+  return raw.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[._-]+|[._-]+$/g, "");
+}
+
+function hasNonEmptyArray(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function stringFromUnknown(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function parsePositiveInteger(value: unknown): number {
+  if (typeof value === "number" && Number.isInteger(value)) return value;
+  if (typeof value === "string" && /^[0-9]+$/.test(value.trim())) return Number(value.trim());
+  return -1;
 }
 
 function normalizeSessionScope(value: string): string {

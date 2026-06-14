@@ -65,6 +65,8 @@ import {
   GIT_BREAK_GLASS_TTL_SECONDS,
   approveGitBreakGlassGrant,
   buildTankOperatorInternalURL,
+  gitBreakGlassBranchScopeLabel,
+  gitBreakGlassRepoScopeLabel,
   parseGitBreakGlassGrantRequest,
   parseGitBreakGlassIntent,
   type GitBreakGlassIntent,
@@ -1875,6 +1877,14 @@ const ADMIN_GIT_BREAK_GLASS_SCRIPT = raw(`
       return [];
     }
   };
+  const datasetObject = (key) => {
+    try {
+      const parsed = JSON.parse(card.dataset[key] || "{}");
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  };
 
   btn.addEventListener("click", async () => {
     btn.disabled = true;
@@ -1888,7 +1898,8 @@ const ADMIN_GIT_BREAK_GLASS_SCRIPT = raw(`
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: card.dataset.sessionId || "",
-          repo: card.dataset.repo || "",
+          repo_scope: datasetObject("repoScope"),
+          branch_scope: datasetObject("branchScope"),
           session_scope: card.dataset.sessionScope || "default",
           reason: card.dataset.reason || "",
           request_event_id: card.dataset.requestEventId || "",
@@ -1901,7 +1912,7 @@ const ADMIN_GIT_BREAK_GLASS_SCRIPT = raw(`
         throw new Error(body.error || body.detail || ("HTTP " + res.status));
       }
       const grant = body.tank || body;
-      meta.textContent = "approved " + (grant.repo || card.dataset.repo || "") + " for session " + (grant.session_id || card.dataset.sessionId || "") + " until " + (grant.expires_at || "expiry unknown");
+      meta.textContent = "approved " + (card.dataset.repoLabel || grant.repo || "requested repos") + " / " + (card.dataset.branchLabel || "requested branches") + " for session " + (grant.session_id || card.dataset.sessionId || "") + " until " + (grant.expires_at || "expiry unknown");
       result.style.display = "";
     } catch (e) {
       err.textContent = "approval failed: " + (e && e.message ? e.message : String(e));
@@ -2375,6 +2386,8 @@ function gitBreakGlassApprovalSection(intent: GitBreakGlassIntent) {
       </section>
     `;
   }
+  const repoLabel = gitBreakGlassRepoScopeLabel(intent.repoScope);
+  const branchLabel = gitBreakGlassBranchScopeLabel(intent.branchScope);
   return html`
     <section class="section col-span-2">
       <div class="section-head">
@@ -2386,7 +2399,10 @@ function gitBreakGlassApprovalSection(intent: GitBreakGlassIntent) {
           class="admin-card"
           id="git-break-glass-card"
           data-session-id="${intent.sessionId}"
-          data-repo="${intent.repo}"
+          data-repo-scope="${JSON.stringify(intent.repoScope)}"
+          data-branch-scope="${JSON.stringify(intent.branchScope)}"
+          data-repo-label="${repoLabel}"
+          data-branch-label="${branchLabel}"
           data-session-scope="${intent.sessionScope}"
           data-reason="${intent.reason}"
           data-request-event-id="${intent.requestEventId}"
@@ -2394,12 +2410,12 @@ function gitBreakGlassApprovalSection(intent: GitBreakGlassIntent) {
           data-ttl-seconds="${intent.ttlSeconds}"
         >
           <div class="admin-head">
-            <span class="email">${intent.repo}</span>
-            <span class="since">${intent.sessionScope} / session ${intent.sessionId}</span>
+            <span class="email">${repoLabel}</span>
+            <span class="since">${branchLabel} / ${intent.sessionScope} / session ${intent.sessionId}</span>
           </div>
           <p class="bot-token-lede">
             Approve the Tank git break-glass request for this session and
-            repository. auth will mint a short-lived service JWT internally,
+            requested repository and branch scope. auth will mint a short-lived service JWT internally,
             call Tank's grant endpoint, and return only the grant status here.
           </p>
           ${intent.reason
@@ -2791,7 +2807,8 @@ app.post("/admin/git-break-glass/grants", async (c) => {
       tank: {
         active: true,
         event_id: "test-mode-git-break-glass-grant",
-        repo: parsed.repo,
+        repo_scope: parsed.repoScope,
+        branch_scope: parsed.branchScope,
         expires_at: new Date(Date.now() + GIT_BREAK_GLASS_TTL_SECONDS * 1000).toISOString(),
         operations: parsed.operations,
         session_id: parsed.sessionId,
@@ -2834,7 +2851,8 @@ app.post("/admin/git-break-glass/grants", async (c) => {
         "[/admin/git-break-glass/grants] tank grant failed:",
         JSON.stringify({
           email: u.email,
-          repo: parsed.repo,
+          repo_scope: parsed.repoScope,
+          branch_scope: parsed.branchScope,
           session_id: parsed.sessionId,
           session_scope: parsed.sessionScope,
           status: e.status,
@@ -2860,7 +2878,8 @@ app.post("/admin/git-break-glass/grants", async (c) => {
     JSON.stringify({
       email: u.email,
       actor_email: u.email,
-      repo: parsed.repo,
+      repo_scope: parsed.repoScope,
+      branch_scope: parsed.branchScope,
       session_id: parsed.sessionId,
       session_scope: parsed.sessionScope,
       request_event_id: parsed.requestEventId,
