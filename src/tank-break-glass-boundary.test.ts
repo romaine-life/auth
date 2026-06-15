@@ -15,7 +15,6 @@ test("auth does not own Tank break-glass approval routes", () => {
     "/admin/azure-break-glass/grants",
     "intent=git-break-glass",
     "intent=azure-break-glass",
-    "TANK_OPERATOR_INTERNAL_URL",
     "tank_git_break_glass",
     "tank_azure_break_glass",
   ]) {

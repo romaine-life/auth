@@ -28,9 +28,10 @@ investing, house-hunt, and fzt-frontend.
 - `GET  /api/ssh/ca` — the SSH CA **public** key as a `TrustedUserCAKeys` line (unauthenticated; a CA public key is published-by-design). 404 when the CA is unconfigured
 - `POST /admin/bot-tokens` — admin-only: mint a 24h bot token (`role=admin`, `purpose=bot`) for break-glass CLI / curl use
 - `POST /admin/service-tokens` — admin-only: mint a 24h service token (`role=service`, `purpose=bot`, `actor_email=<admin>`) for calling service-only MCPs (e.g. `mcp-github`) from a workstation
+- `POST /admin/test-slot-model-approvals/grants` — admin-only: approve a Tank test-slot session to use a model or reasoning effort above the low-cost baseline from an `intent=test-slot-model` approval URL. Production sessions are not eligible for this approval path
 - `POST /api/cli/device` + `POST /api/cli/token` — browser-approved CLI/device flow for minting the same 24h bot token without copying an auth cookie
 - `GET /api/auth/cli/user-login` + `POST /api/auth/cli/user-token` — native-desktop sign-in flow (RFC 8252, PKCE + loopback). The user signs in normally with Microsoft/Google in the browser; a native app on the same machine receives the user's own JWT (`role=user|admin`, no `purpose=bot`) via a one-time code redeemed at the token endpoint. No admin approval — the user IS the requester. First consumer: `romaine-life/shows`'s `desktop/`.
-- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, `auth_federation_exchange_total{result}`, `auth_ssh_cert_exchange_total{result}`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
+- `GET  /metrics` — Prometheus scrape (PodMonitor in `k8s/templates/podmonitor.yaml`); exports `auth_romaine_exchange_total{result}`, `auth_admin_origins_requests_total{method, result}`, `auth_admin_bot_tokens_minted_total`, `auth_admin_service_tokens_minted_total`, `auth_admin_test_slot_model_approvals_total`, `auth_federation_exchange_total{result}`, `auth_ssh_cert_exchange_total{result}`, plus prom-client Node/process/GC defaults (prefixed `auth_`). See `src/metrics.ts`.
 - `GET  /health` — liveness probe
 - `GET  /ready` — readiness probe
 
@@ -220,10 +221,11 @@ surfaces in the log diff).
 
 ## Tank app approvals
 
-Tank-owned approvals, including session break-glass grants, live in
-`romaine-life/tank-operator`. auth only authenticates the admin and issues the
-JWT that Tank verifies; it does not parse Tank request payloads, render Tank
-approval cards, or call Tank grant endpoints.
+Tank-owned operational break-glass grants, including Git and Azure session
+grants, live in `romaine-life/tank-operator`. auth only keeps the narrow admin
+approval surface for test-slot model/effort elevation: auth authenticates the
+admin, mints a short-lived service JWT server-side, calls Tank's slot grant
+endpoint, and returns only the grant status to the browser.
 
 ## CLI-approved bot-token flow
 

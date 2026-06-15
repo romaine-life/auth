@@ -106,6 +106,16 @@ export function recordAdminServiceTokenMint(): void {
   authAdminServiceTokensMintedTotal.inc();
 }
 
+export const authAdminTestSlotModelApprovalsTotal = new Counter({
+  name: "auth_admin_test_slot_model_approvals_total",
+  help: "Tank test-slot non-low-cost model approvals from the auth admin console.",
+  registers: [registry],
+});
+
+export function recordAdminTestSlotModelApproval(): void {
+  authAdminTestSlotModelApprovalsTotal.inc();
+}
+
 // External-audience federation exchange (/api/auth/exchange/federation).
 // Same shape as the service-exchange counter — bounded label set drawn
 // from FederationFailureReason in src/federation-exchange.ts plus a
