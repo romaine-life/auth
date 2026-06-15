@@ -6,6 +6,7 @@ import { logger } from "hono/logger";
 import { setCookie, deleteCookie, getCookie } from "hono/cookie";
 import { and, eq, desc } from "drizzle-orm";
 import { auth, resolveAllTrustedOrigins } from "./auth.js";
+import { adminLoginRedirectPath } from "./admin-redirect.js";
 import { db } from "./db/client.js";
 import { account, cliDeviceGrant, session, user } from "./db/schema.js";
 import {
@@ -2351,7 +2352,7 @@ async function requireAdmin(c: Context) {
       return { status: 403 as const };
     }
   }
-  return { status: 302 as const, location: "/" };
+  return { status: 302 as const, location: adminLoginRedirectPath(c.req.url) };
 }
 
 function testSlotModelApprovalSection(intent: TestSlotModelApprovalIntent) {
