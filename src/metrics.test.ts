@@ -4,11 +4,9 @@ import {
   authRomaineExchangeTotal,
   adminOriginsRequestsTotal,
   authAdminBotTokensMintedTotal,
-  authAdminGitBreakGlassGrantsTotal,
   authAdminServiceTokensMintedTotal,
   authAdminTestSlotModelApprovalsTotal,
   recordAdminBotTokenMint,
-  recordAdminGitBreakGlassGrant,
   recordAdminOrigins,
   recordAdminServiceTokenMint,
   recordAdminTestSlotModelApproval,
@@ -83,7 +81,6 @@ test("registered counter names match what the dashboards and alerts expect", asy
   assert.match(text, /^# HELP auth_admin_origins_requests_total /m);
   assert.match(text, /^# HELP auth_admin_bot_tokens_minted_total /m);
   assert.match(text, /^# HELP auth_admin_service_tokens_minted_total /m);
-  assert.match(text, /^# HELP auth_admin_git_break_glass_grants_total /m);
   assert.match(text, /^# HELP auth_admin_test_slot_model_approvals_total /m);
 });
 
@@ -123,18 +120,6 @@ test("authAdminServiceTokensMintedTotal and authAdminBotTokensMintedTotal are di
   );
 });
 
-test("authAdminGitBreakGlassGrantsTotal increments on every approved grant", async () => {
-  recordAdminGitBreakGlassGrant();
-  recordAdminGitBreakGlassGrant();
-  const text = await registry.metrics();
-  assert.match(text, /^# TYPE auth_admin_git_break_glass_grants_total counter$/m);
-  assert.match(text, /^auth_admin_git_break_glass_grants_total \d+$/m);
-  assert.notStrictEqual(
-    authAdminGitBreakGlassGrantsTotal,
-    authAdminServiceTokensMintedTotal,
-  );
-});
-
 test("authAdminTestSlotModelApprovalsTotal increments on every approved grant", async () => {
   recordAdminTestSlotModelApproval();
   recordAdminTestSlotModelApproval();
@@ -143,6 +128,6 @@ test("authAdminTestSlotModelApprovalsTotal increments on every approved grant", 
   assert.match(text, /^auth_admin_test_slot_model_approvals_total \d+$/m);
   assert.notStrictEqual(
     authAdminTestSlotModelApprovalsTotal,
-    authAdminGitBreakGlassGrantsTotal,
+    authAdminServiceTokensMintedTotal,
   );
 });

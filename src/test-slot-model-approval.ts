@@ -1,9 +1,7 @@
-import { buildTankOperatorInternalURL } from "./git-break-glass.js";
-
-export { buildTankOperatorInternalURL };
-
 export const TEST_SLOT_MODEL_APPROVAL_INTENT = "test-slot-model";
 export const TEST_SLOT_MODEL_APPROVAL_TTL_SECONDS = 3600;
+export const DEFAULT_TANK_OPERATOR_INTERNAL_URL =
+  "http://tank-operator.tank-operator.svc.cluster.local";
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,160}$/;
 const SESSION_SCOPE_PATTERN = /^tank-operator-slot-[1-9][0-9]*$/;
@@ -140,6 +138,21 @@ export function buildTankTestSlotModelApprovalGrantURL(baseURL: string, sessionI
   }
   const base = baseURL.replace(/\/+$/, "");
   return `${base}/api/internal/sessions/${encodeURIComponent(sessionId)}/test-slot-model-approvals/grants`;
+}
+
+export function buildTankOperatorInternalURL(
+  configuredURL: string | undefined,
+  sessionScope: string,
+): string {
+  const scope = normalizeSessionScope(sessionScope);
+  if (scope !== "default") {
+    if (!isAllowedSessionScope(scope)) {
+      throw new Error("session_scope must be default or tank-operator-slot-N");
+    }
+    return `http://tank-operator.${scope}.svc.cluster.local`;
+  }
+  const base = (configuredURL ?? DEFAULT_TANK_OPERATOR_INTERNAL_URL).trim();
+  return base.replace(/\/+$/, "") || DEFAULT_TANK_OPERATOR_INTERNAL_URL;
 }
 
 export interface ApproveTestSlotModelApprovalInput extends TestSlotModelApprovalGrantRequest {
