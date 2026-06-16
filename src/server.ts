@@ -55,21 +55,11 @@ import {
   recordAdminBotTokenMint,
   recordAdminOrigins,
   recordAdminServiceTokenMint,
-  recordAdminTestSlotModelApproval,
   recordExchange,
   recordFederationExchange,
   recordSshCertExchange,
   registry,
 } from "./metrics.js";
-import {
-  buildTankOperatorInternalURL,
-  TestSlotModelApprovalError,
-  TEST_SLOT_MODEL_APPROVAL_TTL_SECONDS,
-  approveTestSlotModelApproval,
-  parseTestSlotModelApprovalGrantRequest,
-  parseTestSlotModelApprovalIntent,
-  type TestSlotModelApprovalIntent,
-} from "./test-slot-model-approval.js";
 import { type JSONWebKeySet } from "jose";
 import { verifyAdminBearerJwt } from "./admin-bearer.js";
 
@@ -1858,58 +1848,6 @@ const ADMIN_SERVICE_TOKEN_SCRIPT = raw(`
 })();
 `);
 
-const ADMIN_TEST_SLOT_MODEL_APPROVAL_SCRIPT = raw(`
-(() => {
-  const card = document.getElementById("test-slot-model-card");
-  if (!card) return;
-  const btn = document.getElementById("approve-test-slot-model");
-  const result = document.getElementById("test-slot-model-result");
-  const meta = document.getElementById("test-slot-model-meta");
-  const err = document.getElementById("test-slot-model-error");
-  if (!btn || !result || !meta || !err) return;
-
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    err.style.display = "none";
-    err.textContent = "";
-    result.style.display = "none";
-    try {
-      const res = await fetch("/admin/test-slot-model-approvals/grants", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: card.dataset.sessionId || "",
-          session_scope: card.dataset.sessionScope || "",
-          mode: card.dataset.mode || "",
-          provider: card.dataset.provider || "",
-          model: card.dataset.model || "",
-          effort: card.dataset.effort || "",
-          low_model: card.dataset.lowModel || "",
-          low_effort: card.dataset.lowEffort || "",
-          reason: card.dataset.reason || "",
-          request_event_id: card.dataset.requestEventId || "",
-          ttl_seconds: Number(card.dataset.ttlSeconds || "3600"),
-        }),
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        throw new Error(body.error || body.detail || ("HTTP " + res.status));
-      }
-      const grant = body.tank || body;
-      const requested = (grant.model || card.dataset.model || "?") + " / " + (grant.effort || card.dataset.effort || "?");
-      meta.textContent = "approved " + requested + " for session " + (grant.session_id || card.dataset.sessionId || "") + " until " + (grant.expires_at || "expiry unknown");
-      result.style.display = "";
-    } catch (e) {
-      err.textContent = "approval failed: " + (e && e.message ? e.message : String(e));
-      err.style.display = "";
-    } finally {
-      btn.disabled = false;
-    }
-  });
-})();
-`);
-
 // ── HTML helpers ──────────────────────────────────────────────────────────
 
 const SHELL = (title: string, body: ReturnType<typeof html>) => html`<!DOCTYPE html>
@@ -2355,74 +2293,6 @@ async function requireAdmin(c: Context) {
   return { status: 302 as const, location: adminLoginRedirectPath(c.req.url) };
 }
 
-function testSlotModelApprovalSection(intent: TestSlotModelApprovalIntent) {
-  if (!intent.present) return html``;
-  if (!intent.ok) {
-    return html`
-      <section class="section col-span-2">
-        <div class="section-head">
-          <span class="title"><span class="sigil">//</span>Test-slot model</span>
-          <span class="count">invalid request</span>
-        </div>
-        <div class="section-body">
-          <div class="admin-card">
-            <p class="bot-token-lede">${intent.error}</p>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-  return html`
-    <section class="section col-span-2">
-      <div class="section-head">
-        <span class="title"><span class="sigil">//</span>Test-slot model</span>
-        <span class="count">${Math.round(intent.ttlSeconds / 60)}m grant</span>
-      </div>
-      <div class="section-body">
-        <div
-          class="admin-card"
-          id="test-slot-model-card"
-          data-session-id="${intent.sessionId}"
-          data-session-scope="${intent.sessionScope}"
-          data-mode="${intent.mode}"
-          data-provider="${intent.provider}"
-          data-model="${intent.model}"
-          data-effort="${intent.effort}"
-          data-low-model="${intent.lowModel}"
-          data-low-effort="${intent.lowEffort}"
-          data-reason="${intent.reason}"
-          data-request-event-id="${intent.requestEventId}"
-          data-ttl-seconds="${intent.ttlSeconds}"
-        >
-          <div class="admin-head">
-            <span class="email">${intent.model} / ${intent.effort}</span>
-            <span class="since">${intent.sessionScope} / session ${intent.sessionId}</span>
-          </div>
-          <p class="bot-token-lede">
-            Approve this Tank test-slot session to use a model or reasoning
-            effort above the low-cost baseline. The baseline for this request is
-            <code>${intent.lowModel}</code> / <code>${intent.lowEffort}</code>.
-            auth will mint a short-lived service JWT internally, call Tank's
-            grant endpoint, and return only the grant status here.
-          </p>
-          ${intent.reason
-            ? html`<p class="bot-token-lede"><code>reason</code> ${intent.reason}</p>`
-            : html``}
-          <div class="admin-actions">
-            <button class="admin-btn" id="approve-test-slot-model" type="button">
-              Approve test-slot model
-            </button>
-          </div>
-          <div class="bot-token-result" id="test-slot-model-result" style="display:none">
-            <div class="bot-token-meta" id="test-slot-model-meta"></div>
-          </div>
-          <div class="bot-token-error" id="test-slot-model-error" style="display:none"></div>
-        </div>
-      </div>
-    </section>
-  `;
-}
-
 app.get("/admin", async (c) => {
   const gate = await requireAdmin(c);
   if ("status" in gate) {
@@ -2431,7 +2301,6 @@ app.get("/admin", async (c) => {
   }
   const users = TEST_MODE ? TEST_USERS : await db.select().from(user).orderBy(desc(user.createdAt));
   const flash = c.req.query("ok") ?? (TEST_MODE ? "test mode · changes are discarded" : null);
-  const testSlotModelIntent = parseTestSlotModelApprovalIntent(new URL(c.req.url).searchParams);
   return c.html(SHELL("Tyrell Console — Subjects", html`
     ${topbar("online")}
     <main class="main">
@@ -2452,8 +2321,6 @@ app.get("/admin", async (c) => {
         </section>
 
         ${flash ? html`<div class="admin-flash">${flash}</div>` : html``}
-
-        ${testSlotModelApprovalSection(testSlotModelIntent)}
 
         <section class="section col-span-2">
           <div class="section-head">
@@ -2583,7 +2450,6 @@ app.get("/admin", async (c) => {
       </div>
     </main>
     ${footer()}
-    <script>${ADMIN_TEST_SLOT_MODEL_APPROVAL_SCRIPT}</script>
     <script>${ADMIN_BOT_TOKEN_SCRIPT}</script>
     <script>${ADMIN_SERVICE_TOKEN_SCRIPT}</script>
   `));
@@ -2765,125 +2631,6 @@ app.post("/admin/service-tokens", async (c) => {
     purpose: "bot",
     role: "service",
     actor_email: u.email,
-  });
-});
-
-app.post("/admin/test-slot-model-approvals/grants", async (c) => {
-  const gate = await requireAdmin(c);
-  if ("status" in gate) {
-    return c.json({ error: "admin only" }, gate.status === 302 ? 401 : 403);
-  }
-
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  const parsed = parseTestSlotModelApprovalGrantRequest(body);
-  if (!parsed.present || !parsed.ok) {
-    return c.json({ error: parsed.present ? parsed.error : "invalid request" }, 400);
-  }
-
-  const u = gate.user as typeof gate.user & { role?: string; apps?: string };
-  if (TEST_MODE) {
-    recordAdminTestSlotModelApproval();
-    return c.json({
-      status: "approved",
-      tank: {
-        active: true,
-        event_id: "test-mode-test-slot-model-grant",
-        expires_at: new Date(
-          Date.now() + TEST_SLOT_MODEL_APPROVAL_TTL_SECONDS * 1000,
-        ).toISOString(),
-        session_id: parsed.sessionId,
-        session_scope: parsed.sessionScope,
-        mode: parsed.mode,
-        provider: parsed.provider,
-        model: parsed.model,
-        effort: parsed.effort,
-      },
-    });
-  }
-
-  let signed;
-  try {
-    signed = await mintAuthJwt({
-      sub: u.id || u.email,
-      email: u.email,
-      name: u.name,
-      role: "service",
-      apps: {},
-      actorEmail: u.email,
-      purpose: "tank_test_slot_model_approval",
-      ttlSeconds: SERVICE_TOKEN_TTL_SECONDS,
-    });
-  } catch (e) {
-    console.error("[/admin/test-slot-model-approvals/grants] mintAuthJwt failed:", e);
-    return c.json({ error: "failed to mint service token" }, 500);
-  }
-
-  const tankOperatorInternalURL = buildTankOperatorInternalURL(
-    process.env.TANK_OPERATOR_INTERNAL_URL,
-    parsed.sessionScope,
-  );
-  let tankResponse;
-  try {
-    tankResponse = await approveTestSlotModelApproval({
-      ...parsed,
-      tankOperatorInternalURL,
-      serviceToken: signed.token,
-    });
-  } catch (e) {
-    if (e instanceof TestSlotModelApprovalError) {
-      console.error(
-        "[/admin/test-slot-model-approvals/grants] tank grant failed:",
-        JSON.stringify({
-          email: u.email,
-          session_id: parsed.sessionId,
-          session_scope: parsed.sessionScope,
-          mode: parsed.mode,
-          model: parsed.model,
-          effort: parsed.effort,
-          status: e.status,
-          upstream_body: e.upstreamBody,
-        }),
-      );
-      return c.json(
-        {
-          error: "tank grant failed",
-          upstream_status: e.status,
-          upstream_body: e.upstreamBody,
-        },
-        502,
-      );
-    }
-    console.error("[/admin/test-slot-model-approvals/grants] tank grant failed:", e);
-    return c.json({ error: "tank grant failed" }, 502);
-  }
-
-  recordAdminTestSlotModelApproval();
-  console.warn(
-    "[/admin/test-slot-model-approvals/grants] approved:",
-    JSON.stringify({
-      email: u.email,
-      actor_email: u.email,
-      session_id: parsed.sessionId,
-      session_scope: parsed.sessionScope,
-      mode: parsed.mode,
-      provider: parsed.provider,
-      model: parsed.model,
-      effort: parsed.effort,
-      low_model: parsed.lowModel,
-      low_effort: parsed.lowEffort,
-      request_event_id: parsed.requestEventId,
-      ttl_seconds: parsed.ttlSeconds,
-    }),
-  );
-
-  return c.json({
-    status: "approved",
-    tank: tankResponse,
   });
 });
 

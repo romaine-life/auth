@@ -5,11 +5,9 @@ import {
   adminOriginsRequestsTotal,
   authAdminBotTokensMintedTotal,
   authAdminServiceTokensMintedTotal,
-  authAdminTestSlotModelApprovalsTotal,
   recordAdminBotTokenMint,
   recordAdminOrigins,
   recordAdminServiceTokenMint,
-  recordAdminTestSlotModelApproval,
   recordExchange,
   registry,
 } from "./metrics.js";
@@ -81,7 +79,6 @@ test("registered counter names match what the dashboards and alerts expect", asy
   assert.match(text, /^# HELP auth_admin_origins_requests_total /m);
   assert.match(text, /^# HELP auth_admin_bot_tokens_minted_total /m);
   assert.match(text, /^# HELP auth_admin_service_tokens_minted_total /m);
-  assert.match(text, /^# HELP auth_admin_test_slot_model_approvals_total /m);
 });
 
 test("authAdminBotTokensMintedTotal increments on every mint", async () => {
@@ -116,18 +113,6 @@ test("authAdminServiceTokensMintedTotal and authAdminBotTokensMintedTotal are di
   // module-init by reading the registered metric names.
   assert.notStrictEqual(
     authAdminBotTokensMintedTotal,
-    authAdminServiceTokensMintedTotal,
-  );
-});
-
-test("authAdminTestSlotModelApprovalsTotal increments on every approved grant", async () => {
-  recordAdminTestSlotModelApproval();
-  recordAdminTestSlotModelApproval();
-  const text = await registry.metrics();
-  assert.match(text, /^# TYPE auth_admin_test_slot_model_approvals_total counter$/m);
-  assert.match(text, /^auth_admin_test_slot_model_approvals_total \d+$/m);
-  assert.notStrictEqual(
-    authAdminTestSlotModelApprovalsTotal,
     authAdminServiceTokensMintedTotal,
   );
 });
