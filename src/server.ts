@@ -278,7 +278,18 @@ if (process.env.TEST_MODE !== "true") {
       if (e instanceof ExchangeError) {
         // Reason string is the same closed set the Prometheus counter
         // uses as its label — drives both the response body and the
-        // dashboard.
+        // dashboard. But the counter label is a BOUNDED set, so it gives
+        // the RATE of e.g. denied_token and never the WHY: the verifier's
+        // specific failure — jose's '"exp"/"nbf" claim timestamp check
+        // failed', 'no applicable key found in the JSON Web Key Set',
+        // 'signature verification failed' — is what separates a clock-skew
+        // reject from a JWKS key-rotation cache miss (which need different
+        // fixes), and it survives only in e.message. Log it so the
+        // denied_token bucket is observable, not a black box. warn, not
+        // error: a denied exchange is an expected client-caused outcome.
+        console.warn(
+          `[/api/auth/exchange/k8s] denied ${e.reason} (${e.status}): ${e.message}`,
+        );
         recordExchange(e.reason);
         return c.json(
           { error: e.message, reason: e.reason },
