@@ -229,19 +229,9 @@ k8sOidc:
   # test-slot orchestrators) do not. Add a namespace here only when the
   # consumer reads pod annotations, and add a matching route in
   # src/service-consumers.ts.
-  serviceConsumerNamespaces:
-    - tank-operator-sessions
-    - mcp-k8s
-    - mcp-argocd
-    - mcp-azure-personal
-    - tank-operator
-    - tank-operator-slot-1-sessions
-    - tank-operator-slot-2-sessions
-    - tank-operator-slot-3-sessions
-    - tank-operator-slot-4-sessions
-    - tank-operator-slot-5-sessions
-    - tank-operator-slot-6-sessions
-    - tank-operator-slot-7-sessions
-    - tank-operator-slot-8-sessions
-    - tank-operator-slot-9-sessions
-    - tank-operator-slot-10-sessions
+  # Emptied during the 2026-06 cost spin-down: every consumer here
+  # (tank-operator, its test-slot sessions, and the mcp-* servers) was
+  # suspended and its namespace deleted, so the per-namespace RBAC reconcile
+  # failed and blocked auth from syncing. Re-add a namespace when its consumer
+  # comes back online (and add a matching route in src/service-consumers.ts).
+  serviceConsumerNamespaces: []
