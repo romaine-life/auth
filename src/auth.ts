@@ -288,6 +288,21 @@ export const auth = betterAuth({
           ],
           skipConsent: true,
         },
+        {
+          clientId: "ambience",
+          // Public client — no secret. ambience-authority talks to us directly
+          // as a native OIDC relying party (authorization-code + PKCE); its
+          // backend (BFF) does the code exchange and verifies the id_token
+          // (aud="ambience", iss=https://auth.romaine.life). Replaces the old
+          // standalone single-tenant `ambience-oauth` Entra app registration,
+          // which rejected personal Microsoft accounts.
+          type: "public",
+          name: "Ambience",
+          metadata: null,
+          disabled: false,
+          redirectUrls: ["https://ambience.romaine.life/auth/callback"],
+          skipConsent: true,
+        },
       ],
     }),
   ],
