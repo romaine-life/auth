@@ -2,16 +2,36 @@ name: Auto-merge Dependabot
 
 on: pull_request
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   auto-merge:
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
+      # Merge with a GitHub App token instead of the workflow GITHUB_TOKEN:
+      # pushes made with the default GITHUB_TOKEN never fire `push` workflows
+      # (GitHub's recursive-trigger guard), so Dependabot merges landed on
+      # main without triggering deploy/apply workflows and deployed state
+      # drifted behind. An app-attributed merge push triggers workflows
+      # normally. See romaine-life/my-homepage#84.
+      #
+      # AUTOMERGE_APP_PRIVATE_KEY is an org-level *Dependabot* secret (runs
+      # triggered by dependabot[bot] read Dependabot secrets, not Actions
+      # secrets). It holds the infra-bootstrap-github-app private key, also
+      # kept in Key Vault `romaine-kv` as
+      # `infra-bootstrap-github-app-private-key` — re-sync the org secret if
+      # that key is ever rotated.
+      - name: Mint app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: 3942172 # infra-bootstrap-github-app
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
