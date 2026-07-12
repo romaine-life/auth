@@ -32,6 +32,11 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Bump commits are pushed straight to main, which the branch ruleset
+          # forbids for GITHUB_TOKEN (GitHub Actions cannot be a bypass actor).
+          # The write deploy key is the ruleset's DeployKey bypass actor, so CI
+          # pushes keep working while PR merges still wait for required checks.
+          ssh-key: ${{ secrets.MAIN_PUSH_DEPLOY_KEY }}
 
       - name: Azure Login (OIDC)
         uses: azure/login@v3
