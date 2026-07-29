@@ -45,7 +45,6 @@ const PROD_TRUSTED_ORIGINS = [
   "https://investing.romaine.life",
   "https://diagrams.romaine.life",
   "https://tank.romaine.life",
-  "https://chess.romaine.life",
   "https://fzt-frontend.romaine.life",
   "https://glimmung.romaine.life",
   // Per-project slot wildcards under `.dev.romaine.life` do not belong
@@ -180,12 +179,11 @@ export const auth = betterAuth({
       },
     }),
 
-    // OAuth2/OIDC authorization-server surface for off-the-shelf relying
-    // parties that can't speak the romaine.life-native cookie/JWKS pattern.
-    // First consumer: Grafana at grafana.romaine.life. Future likely
-    // consumer: Argo CD UI. First-party romaine.life apps (homepage,
-    // workout, glimmung, tank-operator) keep using the shared session
-    // cookie + /api/auth/jwks — they don't go through these endpoints.
+    // OAuth2/OIDC authorization-server surface for relying parties that
+    // cannot use the romaine.life-parent-domain session cookie. Grafana and
+    // Argo CD use it as off-the-shelf RPs; ambience and chess-tactics use it
+    // as first-party BFFs. Same-parent-domain apps may keep using the shared
+    // session cookie + /api/auth/jwks.
     //
     // Mounted under /api/auth/* alongside the rest of Better Auth, so the
     // discovery doc is at /api/auth/.well-known/openid-configuration and
@@ -301,6 +299,19 @@ export const auth = betterAuth({
           metadata: null,
           disabled: false,
           redirectUrls: ["https://ambience.romaine.life/auth/callback"],
+          skipConsent: true,
+        },
+        {
+          clientId: "chess-tactics",
+          // Public BFF client — no distributed secret. The Chess Tactics
+          // backend performs authorization-code + PKCE, verifies the id_token
+          // against this provider's JWKS, and keeps access/refresh tokens in
+          // host-only HttpOnly cookies on chess-tactics.com.
+          type: "public",
+          name: "Chess Tactics",
+          metadata: null,
+          disabled: false,
+          redirectUrls: ["https://chess-tactics.com/api/auth/callback"],
           skipConsent: true,
         },
       ],
