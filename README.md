@@ -362,6 +362,9 @@ window.location.href =
 ```
 
 The session cookie is scoped to `.romaine.life` — SSO across every subdomain.
+Apps on another registrable domain use this service's OIDC authorization-code
+flow instead. `chess-tactics.com` is a public PKCE client whose backend performs
+the exchange and maintains host-only application cookies.
 
 ## Custom user attributes
 
