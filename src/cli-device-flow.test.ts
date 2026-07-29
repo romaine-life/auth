@@ -3,11 +3,16 @@ import assert from "node:assert/strict";
 import {
   appendCallbackParams,
   buildRequesterGuidance,
+  decodeCliGrantMetadata,
   decodeRequesterInfo,
+  encodeCliGrantMetadata,
   encodeRequesterInfo,
   hashSecret,
+  normalizeEnvironmentName,
   normalizeUserCode,
+  parseApprovalInputs,
   previousMiscIdentifiersFromClientNames,
+  requireApprovalValues,
   requireRequesterInfo,
   validateLoopbackRedirectUri,
   validatePkceInput,
@@ -61,6 +66,37 @@ test("requireRequesterInfo: bounds stored display text", () => {
   assert.strictEqual(info.miscIdentifier.length, 80);
 });
 
+test("parseApprovalInputs: accepts only unique server-defined inputs", () => {
+  assert.deepStrictEqual(parseApprovalInputs(undefined), []);
+  assert.deepStrictEqual(parseApprovalInputs(["environment_name"]), ["environment_name"]);
+  assert.throws(() => parseApprovalInputs("environment_name"), /must be an array/);
+  assert.throws(() => parseApprovalInputs(["password"]), /unsupported approval input/);
+  assert.throws(() => parseApprovalInputs(["__proto__"]), /unsupported approval input/);
+  assert.throws(
+    () => parseApprovalInputs(["environment_name", "environment_name"]),
+    /duplicate approval input/,
+  );
+});
+
+test("normalizeEnvironmentName: produces the canonical DNS label", () => {
+  assert.strictEqual(normalizeEnvironmentName("  Loading / Transition!  "), "loading-transition");
+  assert.strictEqual(normalizeEnvironmentName("one___two---three"), "one-two-three");
+  assert.strictEqual(normalizeEnvironmentName("a".repeat(80)), "a".repeat(63));
+  assert.throws(() => normalizeEnvironmentName(" --- "), /letter or number/);
+});
+
+test("requireApprovalValues: requires and normalizes every requested value", () => {
+  assert.deepStrictEqual(requireApprovalValues([], null), {});
+  assert.deepStrictEqual(
+    requireApprovalValues(["environment_name"], { environment_name: " New Campaign Tab " }),
+    { environment_name: "new-campaign-tab" },
+  );
+  assert.throws(
+    () => requireApprovalValues(["environment_name"], {}),
+    /environment_name is required/,
+  );
+});
+
 test("encodeRequesterInfo/decodeRequesterInfo: round trips structured display fields", () => {
   const info = {
     whereHappening: "Codex in D:\\repos\\auth",
@@ -76,6 +112,50 @@ test("decodeRequesterInfo: preserves legacy plain self-identification strings", 
     intendedUse: "legacy request",
     miscIdentifier: "legacy",
   });
+});
+
+test("CLI grant metadata: round trips requested and approved values", () => {
+  const requester = {
+    whereHappening: "Codex desktop",
+    intendedUse: "authenticate a development environment",
+    miscIdentifier: "anvil",
+  };
+  assert.deepStrictEqual(
+    decodeCliGrantMetadata(encodeCliGrantMetadata(
+      requester,
+      ["environment_name"],
+      { environment_name: "loading-feature" },
+    )),
+    {
+      requester,
+      approvalInputs: ["environment_name"],
+      approvalValues: { environment_name: "loading-feature" },
+    },
+  );
+});
+
+test("CLI grant metadata: legacy requester records have no approval inputs", () => {
+  const requester = {
+    whereHappening: "legacy workspace",
+    intendedUse: "legacy request",
+    miscIdentifier: "legacy",
+  };
+  assert.deepStrictEqual(
+    decodeCliGrantMetadata(encodeRequesterInfo(requester)),
+    { requester, approvalInputs: [], approvalValues: null },
+  );
+  assert.deepStrictEqual(
+    decodeCliGrantMetadata("Codex legacy request"),
+    {
+      requester: {
+        whereHappening: "Codex legacy request",
+        intendedUse: "legacy request",
+        miscIdentifier: "legacy",
+      },
+      approvalInputs: [],
+      approvalValues: null,
+    },
+  );
 });
 
 test("previousMiscIdentifiersFromClientNames: returns recent unique structured misc identifiers", () => {
@@ -114,6 +194,14 @@ test("buildRequesterGuidance: describes required fields and prior misc identifie
   assert.match(guidance.fields.where_happening, /where/i);
   assert.match(guidance.fields.intended_use, /used for/i);
   assert.match(guidance.fields.misc_identifier, /previous_misc_identifiers/);
+  assert.match(
+    guidance.supported_approval_inputs.environment_name.description,
+    /non-secret/i,
+  );
+  assert.strictEqual(
+    guidance.supported_approval_inputs.environment_name.max_length,
+    63,
+  );
   assert.deepStrictEqual(guidance.previous_misc_identifiers, ["lantern", "teapot"]);
   assert.strictEqual(guidance.constraints.previous_misc_identifiers_limit, 50);
 });

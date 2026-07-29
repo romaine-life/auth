@@ -65,6 +65,8 @@ export const cliDeviceGrant = pgTable(
     deviceCodeHash: text("device_code_hash").notNull(),
     userCodeHash: text("user_code_hash").notNull(),
     exchangeCodeHash: text("exchange_code_hash"),
+    // Legacy OAuth-style column name. It stores versioned JSON metadata for
+    // requester display fields and optional approver-supplied values.
     clientName: text("client_name").notNull(),
     redirectUri: text("redirect_uri"),
     state: text("state"),

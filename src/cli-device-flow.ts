@@ -6,8 +6,22 @@ export const CLI_WHERE_HAPPENING_MAX_LENGTH = 500;
 export const CLI_INTENDED_USE_MAX_LENGTH = 500;
 export const CLI_MISC_IDENTIFIER_MAX_LENGTH = 80;
 export const CLI_PREVIOUS_MISC_IDENTIFIERS_LIMIT = 50;
+export const CLI_ENVIRONMENT_NAME_MAX_LENGTH = 63;
 
 const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+export const CLI_APPROVAL_INPUT_DEFINITIONS = {
+  environment_name: {
+    label: "Environment name",
+    description:
+      "Choose the non-secret DNS-safe name the requesting development environment will use.",
+    placeholder: "loading-feature",
+    max_length: CLI_ENVIRONMENT_NAME_MAX_LENGTH,
+  },
+} as const;
+
+export type CliApprovalInputName = keyof typeof CLI_APPROVAL_INPUT_DEFINITIONS;
+export type CliApprovalValues = Partial<Record<CliApprovalInputName, string>>;
 
 export type CliDeviceStatus =
   | "pending"
@@ -20,6 +34,12 @@ export interface CliRequesterInfo {
   whereHappening: string;
   intendedUse: string;
   miscIdentifier: string;
+}
+
+export interface CliGrantMetadata {
+  requester: CliRequesterInfo;
+  approvalInputs: CliApprovalInputName[];
+  approvalValues: CliApprovalValues | null;
 }
 
 export interface CliRequesterGuidance {
@@ -35,6 +55,7 @@ export interface CliRequesterGuidance {
     misc_identifier_max_length: number;
     previous_misc_identifiers_limit: number;
   };
+  supported_approval_inputs: typeof CLI_APPROVAL_INPUT_DEFINITIONS;
   previous_misc_identifiers: string[];
 }
 
@@ -93,6 +114,68 @@ export function requireRequesterInfo(body: Record<string, unknown>): CliRequeste
   };
 }
 
+export function parseApprovalInputs(value: unknown): CliApprovalInputName[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("approval_inputs must be an array");
+  }
+
+  const inputs: CliApprovalInputName[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (
+      typeof item !== "string"
+      || !Object.hasOwn(CLI_APPROVAL_INPUT_DEFINITIONS, item)
+    ) {
+      throw new Error(`unsupported approval input: ${String(item)}`);
+    }
+    if (seen.has(item)) {
+      throw new Error(`duplicate approval input: ${item}`);
+    }
+    seen.add(item);
+    inputs.push(item as CliApprovalInputName);
+  }
+  return inputs;
+}
+
+export function normalizeEnvironmentName(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new Error("environment_name is required");
+  }
+  let name = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (name.length > CLI_ENVIRONMENT_NAME_MAX_LENGTH) {
+    name = name.slice(0, CLI_ENVIRONMENT_NAME_MAX_LENGTH).replace(/-+$/g, "");
+  }
+  if (!name) {
+    throw new Error("environment_name must contain at least one letter or number");
+  }
+  return name;
+}
+
+export function requireApprovalValues(
+  requestedInputs: CliApprovalInputName[],
+  values: unknown,
+): CliApprovalValues {
+  if (!values || typeof values !== "object" || Array.isArray(values)) {
+    if (requestedInputs.length === 0) return {};
+    throw new Error("approval values are required");
+  }
+
+  const source = values as Record<string, unknown>;
+  const approved: CliApprovalValues = {};
+  for (const input of requestedInputs) {
+    if (input === "environment_name") {
+      approved.environment_name = normalizeEnvironmentName(source.environment_name);
+    }
+  }
+  return approved;
+}
+
 export function encodeRequesterInfo(info: CliRequesterInfo): string {
   return JSON.stringify({
     v: 1,
@@ -117,6 +200,41 @@ export function decodeRequesterInfo(value: string): CliRequesterInfo {
       miscIdentifier: "legacy",
     };
   }
+}
+
+export function encodeCliGrantMetadata(
+  requester: CliRequesterInfo,
+  approvalInputs: CliApprovalInputName[],
+  approvalValues: CliApprovalValues | null = null,
+): string {
+  return JSON.stringify({
+    v: 2,
+    where_happening: requester.whereHappening,
+    intended_use: requester.intendedUse,
+    misc_identifier: requester.miscIdentifier,
+    approval_inputs: approvalInputs,
+    ...(approvalValues ? { approval_values: approvalValues } : {}),
+  });
+}
+
+export function decodeCliGrantMetadata(value: string): CliGrantMetadata {
+  const requester = decodeRequesterInfo(value);
+  let parsed: Record<string, unknown>;
+  try {
+    const candidate = JSON.parse(value) as unknown;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return { requester, approvalInputs: [], approvalValues: null };
+    }
+    parsed = candidate as Record<string, unknown>;
+  } catch {
+    return { requester, approvalInputs: [], approvalValues: null };
+  }
+
+  const approvalInputs = parseApprovalInputs(parsed.approval_inputs);
+  const approvalValues = parsed.approval_values == null
+    ? null
+    : requireApprovalValues(approvalInputs, parsed.approval_values);
+  return { requester, approvalInputs, approvalValues };
 }
 
 export function previousMiscIdentifiersFromClientNames(
@@ -155,6 +273,7 @@ export function buildRequesterGuidance(previousMiscIdentifiers: string[]): CliRe
       misc_identifier_max_length: CLI_MISC_IDENTIFIER_MAX_LENGTH,
       previous_misc_identifiers_limit: CLI_PREVIOUS_MISC_IDENTIFIERS_LIMIT,
     },
+    supported_approval_inputs: CLI_APPROVAL_INPUT_DEFINITIONS,
     previous_misc_identifiers: previousMiscIdentifiers.slice(0, CLI_PREVIOUS_MISC_IDENTIFIERS_LIMIT),
   };
 }
