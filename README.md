@@ -256,6 +256,14 @@ Response:
     "misc_identifier_max_length": 80,
     "previous_misc_identifiers_limit": 50
   },
+  "supported_approval_inputs": {
+    "environment_name": {
+      "label": "Environment name",
+      "description": "Choose the non-secret DNS-safe name...",
+      "placeholder": "loading-feature",
+      "max_length": 63
+    }
+  },
   "previous_misc_identifiers": ["lantern", "teapot"]
 }
 ```
@@ -269,6 +277,7 @@ curl -sS -X POST https://auth.romaine.life/api/cli/device \
     "where_happening": "Codex desktop session in D:\\repos\\auth",
     "intended_use": "Use auth.romaine.life bot-token auth for follow-on romaine API calls requested in this session",
     "misc_identifier": "anvil",
+    "approval_inputs": ["environment_name"],
     "redirect_uri": "http://127.0.0.1:49152/callback",
     "state": "opaque-client-state",
     "code_challenge": "<base64url-sha256-code-verifier>",
@@ -294,6 +303,13 @@ intentionally loose. Agent callers should describe where the request is coming
 from, what the token is intended for, and provide a noun-style misc identifier
 that is not listed in `previous_misc_identifiers`. The approval page shows all
 three fields before the admin approves.
+
+`approval_inputs` is optional. Each requested name must appear in
+`supported_approval_inputs`; unknown and duplicate names are rejected. Auth
+owns the label, help text, normalization, and validation so an untrusted
+requester cannot turn the approval page into an arbitrary data-entry form.
+Requested values are explicitly non-secret and the approval page warns that
+they are returned to the requesting CLI.
 
 The client should try to open `verification_uri_complete`. If that fails, show
 `verification_uri` and `user_code` so the admin can enter the code manually.
@@ -325,11 +341,14 @@ curl -sS -X POST https://auth.romaine.life/api/cli/token \
   }'
 ```
 
-The token response matches `/admin/bot-tokens`: `{ token, expires_at,
-expires_in_hours, purpose }`. Request secrets and one-time codes are stored only
-as SHA-256 hashes in Postgres. Loopback redirects are limited to explicit-port
-`http://localhost`, `http://127.0.0.1`, or `http://[::1]`, and loopback use
-requires `code_challenge_method=S256`.
+The token response extends `/admin/bot-tokens` with the approved values:
+`{ token, expires_at, expires_in_hours, purpose, approval_values }`. A request
+for `environment_name` returns, for example,
+`"approval_values": { "environment_name": "loading-feature" }`. These values
+are grant metadata, not JWT claims. Request secrets and one-time codes are
+stored only as SHA-256 hashes in Postgres. Loopback redirects are limited to
+explicit-port `http://localhost`, `http://127.0.0.1`, or `http://[::1]`, and
+loopback use requires `code_challenge_method=S256`.
 
 ## How apps consume this
 

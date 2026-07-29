@@ -12,19 +12,23 @@ import { account, cliDeviceGrant, session, user } from "./db/schema.js";
 import {
   appendCallbackParams,
   buildRequesterGuidance,
+  CLI_APPROVAL_INPUT_DEFINITIONS,
   CLI_DEVICE_EXPIRES_SECONDS,
   CLI_DEVICE_POLL_INTERVAL_SECONDS,
-  decodeRequesterInfo,
-  encodeRequesterInfo,
+  decodeCliGrantMetadata,
+  encodeCliGrantMetadata,
   generateUserCode,
   hashSecret,
   normalizeUserCode,
+  parseApprovalInputs,
   previousMiscIdentifiersFromClientNames,
   randomUrlToken,
+  requireApprovalValues,
   requireRequesterInfo,
   validateLoopbackRedirectUri,
   validatePkceInput,
   verifyPkceS256,
+  type CliApprovalInputName,
   type CliDeviceStatus,
   type CliRequesterInfo,
 } from "./cli-device-flow.js";
@@ -1571,6 +1575,7 @@ code, kbd, samp {
 .admin-card .admin-head .since { font-family: var(--font-mono); font-size: 10px; color: var(--fg-faint); letter-spacing: 0.1em; }
 .admin-grid { display: grid; grid-template-columns: 90px 1fr; gap: 8px 12px; align-items: center; }
 .admin-grid label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-faint); }
+.admin-grid .field-help { font-family: var(--font-mono); font-size: 10px; line-height: 1.45; color: var(--fg-faint); }
 .admin-grid input, .admin-grid select, .admin-grid textarea {
   background: #000;
   color: var(--fg-body);
@@ -3035,8 +3040,11 @@ function cliStatusMessage(grant: CliDeviceGrantRow | null): string {
 }
 
 function cliApprovedMessage(grant: CliDeviceGrantRow): string {
-  const requester = decodeRequesterInfo(grant.clientName);
-  return `Approved. The requester identified as "${requester.miscIdentifier}" can now exchange this request for a bot token.`;
+  const metadata = decodeCliGrantMetadata(grant.clientName);
+  const environment = metadata.approvalValues?.environment_name
+    ? ` Environment name: "${metadata.approvalValues.environment_name}".`
+    : "";
+  return `Approved. The requester identified as "${metadata.requester.miscIdentifier}" can now exchange this request for a bot token.${environment}`;
 }
 
 function cliApprovalPage(opts: {
@@ -3047,7 +3055,10 @@ function cliApprovalPage(opts: {
   exchangeCode?: string | null;
 }) {
   const grant = opts.grant;
-  const requester = grant ? decodeRequesterInfo(grant.clientName) : null;
+  const metadata = grant ? decodeCliGrantMetadata(grant.clientName) : null;
+  const requester = metadata?.requester ?? null;
+  const approvalInputs = metadata?.approvalInputs ?? [];
+  const approvalValues = metadata?.approvalValues ?? {};
   return SHELL("Approve CLI token - auth.romaine.life", html`
     ${topbar("online")}
     <main class="main">
@@ -3088,6 +3099,10 @@ function cliApprovalPage(opts: {
               <input readonly value="${grant.status}" />
               <label>Return URL</label>
               <input readonly value="${grant.redirectUri ?? "none"}" />
+              ${approvalInputs.map((name) => approvalValues[name] ? html`
+                <label>${CLI_APPROVAL_INPUT_DEFINITIONS[name].label}</label>
+                <input readonly value="${approvalValues[name]}" />
+              ` : html``)}
             </div>
           </div>
         ` : html``}
@@ -3095,11 +3110,47 @@ function cliApprovalPage(opts: {
         ${grant && grant.status === "pending" && !cliGrantExpired(grant) ? html`
           <form class="signin-stack" method="POST" action="/cli/approve">
             <input type="hidden" name="user_code" value="${opts.userCode}" />
+            ${approvalInputs.length > 0 ? html`
+              <div class="admin-card">
+                <div class="admin-head">
+                  <span class="email">Approval details</span>
+                  <span class="since">non-secret values only</span>
+                </div>
+                <div class="admin-grid">
+                  ${approvalInputs.map((name) => {
+                    const definition = CLI_APPROVAL_INPUT_DEFINITIONS[name];
+                    return html`
+                      <label for="approval-${name}">${definition.label}</label>
+                      <input
+                        id="approval-${name}"
+                        name="${name}"
+                        required
+                        maxlength="${definition.max_length}"
+                        placeholder="${definition.placeholder}"
+                        autocomplete="off"
+                      />
+                      <label></label>
+                      <span class="field-help">${definition.description}</span>
+                    `;
+                  })}
+                </div>
+                <p class="vk-footnote">
+                  These values are returned to the requesting CLI. Do not enter
+                  passwords, tokens, or other secrets.
+                </p>
+              </div>
+            ` : html``}
             <button class="signin-btn" type="submit" name="decision" value="approve">
               <span class="signin-label">Approve bot token</span>
               <span class="signin-meta">24h</span>
             </button>
-            <button class="signin-btn" type="submit" name="decision" value="deny">
+            <button
+              class="signin-btn"
+              type="submit"
+              name="decision"
+              value="deny"
+              formnovalidate
+            >
               <span class="signin-label">Deny request</span>
               <span class="signin-meta">cancel</span>
             </button>
@@ -3143,6 +3194,7 @@ app.post("/api/cli/device", async (c) => {
   let redirectUri: string | null;
   let pkce: { codeChallenge: string | null; codeChallengeMethod: "S256" | null };
   let requesterInfo: CliRequesterInfo;
+  let approvalInputs: CliApprovalInputName[];
   try {
     redirectUri = validateLoopbackRedirectUri(body.redirect_uri);
     pkce = validatePkceInput(
@@ -3151,6 +3203,7 @@ app.post("/api/cli/device", async (c) => {
       body.code_challenge_method,
     );
     requesterInfo = requireRequesterInfo(body);
+    approvalInputs = parseApprovalInputs(body.approval_inputs);
   } catch (e) {
     return c.json({ error: (e as Error).message }, 400);
   }
@@ -3164,7 +3217,7 @@ app.post("/api/cli/device", async (c) => {
     id: crypto.randomUUID(),
     deviceCodeHash: hashSecret(deviceCode),
     userCodeHash: hashSecret(normalizeUserCode(userCode)),
-    clientName: encodeRequesterInfo(requesterInfo),
+    clientName: encodeCliGrantMetadata(requesterInfo, approvalInputs),
     redirectUri,
     state: typeof body.state === "string" ? body.state.slice(0, 500) : null,
     codeChallenge: pkce.codeChallenge,
@@ -3266,6 +3319,22 @@ app.post("/cli/approve", async (c) => {
     }));
   }
 
+  let approvalValues;
+  let metadata;
+  try {
+    metadata = decodeCliGrantMetadata(grant.clientName);
+    approvalValues = requireApprovalValues(
+      metadata.approvalInputs,
+      Object.fromEntries(form.entries()),
+    );
+  } catch (e) {
+    return c.html(cliApprovalPage({
+      userCode,
+      grant,
+      message: `Cannot approve this request: ${(e as Error).message}.`,
+    }), 400);
+  }
+
   const exchangeCode = randomUrlToken();
   const u = gate.user as typeof gate.user & { role?: string };
   const updated = await db
@@ -3273,6 +3342,11 @@ app.post("/cli/approve", async (c) => {
     .set({
       status: "approved" satisfies CliDeviceStatus,
       exchangeCodeHash: hashSecret(exchangeCode),
+      clientName: encodeCliGrantMetadata(
+        metadata.requester,
+        metadata.approvalInputs,
+        approvalValues,
+      ),
       approvedByUserId: u.id,
       approvedByEmail: u.email,
       approvedAt: new Date(),
@@ -3315,6 +3389,15 @@ async function consumeApprovedCliGrant(c: Context, grant: CliDeviceGrantRow) {
   if (grant.status !== "approved") return oauthError(c, "expired_token");
   if (!grant.approvedByUserId) return oauthError(c, "invalid_grant");
 
+  let approvalValues;
+  try {
+    const metadata = decodeCliGrantMetadata(grant.clientName);
+    approvalValues = requireApprovalValues(metadata.approvalInputs, metadata.approvalValues);
+  } catch (e) {
+    console.error("[/api/cli/token] invalid approval values:", e);
+    return oauthError(c, "invalid_grant");
+  }
+
   const rows = await db
     .select()
     .from(user)
@@ -3331,7 +3414,10 @@ async function consumeApprovedCliGrant(c: Context, grant: CliDeviceGrantRow) {
   if (consumed.length === 0) return oauthError(c, "invalid_grant");
 
   try {
-    return c.json(await mintAdminBotToken(approver, "cli-device"));
+    return c.json({
+      ...await mintAdminBotToken(approver, "cli-device"),
+      approval_values: approvalValues,
+    });
   } catch (e) {
     console.error("[/api/cli/token] signJWT failed:", e);
     return c.json({ error: "failed to mint token" }, 500);
