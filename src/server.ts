@@ -3128,6 +3128,7 @@ function cliApprovalPage(opts: {
                         maxlength="${definition.max_length}"
                         placeholder="${definition.placeholder}"
                         autocomplete="off"
+                        autofocus
                       />
                       <label></label>
                       <span class="field-help">${definition.description}</span>
