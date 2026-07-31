@@ -7,6 +7,7 @@ import { setCookie, deleteCookie, getCookie } from "hono/cookie";
 import { and, eq, desc } from "drizzle-orm";
 import { auth, resolveAllTrustedOrigins } from "./auth.js";
 import { adminLoginRedirectPath } from "./admin-redirect.js";
+import { singleProviderSignInPath } from "./oidc-login-provider.js";
 import { db } from "./db/client.js";
 import { account, cliDeviceGrant, session, user } from "./db/schema.js";
 import {
@@ -2099,6 +2100,13 @@ app.get("/", async (c) => {
   const result = await getAuthState(c);
 
   if (!result) {
+    // A signed-out arrival from a single-provider OIDC client's authorize
+    // bounce skips the provider chooser and goes straight into that
+    // provider's sign-in; the authorize flow resumes from the signed
+    // oidc_login_prompt cookie after the provider callback. See
+    // src/oidc-login-provider.ts.
+    const forcedSignIn = singleProviderSignInPath(c.req.query("client_id"));
+    if (forcedSignIn) return c.redirect(forcedSignIn);
     return c.html(SHELL("Voight-Kampff — auth.romaine.life", html`
       ${topbar("online")}
       <main class="main">
