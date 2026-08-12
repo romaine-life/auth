@@ -37,9 +37,11 @@ uses (`SignJWT`, `jwtVerify`, `generateKeyPair`, `exportJWK`, `createLocalJWKSet
 1. **Clients are data, not config.** The successor has no `trustedClients`; clients are rows.
    `src/oauth-clients.ts` declares the four in code and reconciles them into `oauth_client` at
    boot, idempotently, awaited before `serve()` so no authorize call can arrive for a client that
-   has not been written. A confidential client whose secret is missing throws and the process
-   exits — registering it without one would silently downgrade it to something anybody could
-   impersonate.
+   has not been written. A confidential client whose secret is missing is registered **public**
+   with an error logged, rather than aborting startup: this one process is the authorization
+   server for everything, and exiting because one client's secret has not been provisioned yet
+   takes sign-in away from Grafana and Argo CD too — the tools you would use to fix it. Public is
+   not a downgrade from anything there; it is exactly what that client is today.
 2. **One claims hook became three.** `customIdTokenClaims` and `customUserInfoClaims` are both
    wired to the same `platformClaims`, because they were one hook before and letting them drift is
    how a relying party ends up authorizing differently depending on which surface it read.
@@ -85,8 +87,10 @@ typecheck.
 Verification here is not deployment. Before this ships:
 
 1. **`OIDC_CHESS_TACTICS_CLIENT_SECRET` must exist in Key Vault** and be mounted into both this
-   service and the Chess Tactics deployment. Chess Tactics becomes a confidential client
-   (ADR-0576); until the secret is installed it falls back to sending only its client id.
+   service and the Chess Tactics deployment. Until it does, both sides degrade to public — Chess
+   Tactics sends only its client id, and this service registers it public with an error logged, so
+   the deploy is safe in either order. **Provisioning the secret requires a pod RESTART to take
+   effect**: the plugin caches trusted clients in a module-level Map it never invalidates.
 2. **Apply `drizzle/0002` before rolling the image**, as with 0001.
 3. **Every live Grafana, Argo CD and ambience session ends at cutover.** The old opaque tokens are
    meaningless to the new plugin, so there is nothing to carry across. Everyone signs in once more.

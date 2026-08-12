@@ -139,13 +139,11 @@ type ClientRow = {
 /**
  * Put the declared clients in the database, idempotently.
  *
- * Called once at startup, before the server accepts traffic. A confidential client whose secret
- * is absent from the environment is a configuration error and throws: registering it without one
- * would silently downgrade it to a client anybody could impersonate, which is worse than not
- * starting.
+ * Called once at startup, before the server accepts traffic.
  *
- * Test mode is exempt — a slot constructs `auth` without real credentials and never reaches an
- * authorize call.
+ * A confidential client whose secret is absent is registered PUBLIC with an error logged, rather
+ * than aborting startup — see the comment at that branch for why refusing to start is the more
+ * dangerous choice when one process is the authorization server for everything.
  */
 export async function reconcileOAuthClients(
   auth: AuthWithAdapter,
@@ -155,13 +153,31 @@ export async function reconcileOAuthClients(
 
   for (const client of OAUTH_CLIENTS) {
     let secret: string | null = null;
-    if (!client.isPublic) {
+    let confidential = !client.isPublic;
+    if (confidential) {
       secret = process.env[client.secretEnv ?? ""] ?? null;
-      if (!secret && !testMode) {
-        throw new Error(
-          `${client.clientId} is a confidential client but ${client.secretEnv} is unset. `
-          + "Refusing to register it as one anybody could impersonate.",
-        );
+      if (!secret) {
+        // A missing secret must NOT take the authorization server down.
+        //
+        // The tempting answer is to throw: refusing to register a confidential client as one
+        // anybody could impersonate sounds like the safe failure. It is the opposite here. This
+        // process serves Grafana, Argo CD, ambience and Chess Tactics; exiting because ONE
+        // client's secret has not been provisioned yet takes sign-in away from all of them —
+        // including the tools you would use to fix it.
+        //
+        // Registering it public instead is not a downgrade from anything: it is exactly what that
+        // client is today, and the alternative is not "more secure", it is "no authorization
+        // server". So the client stays as it stands, loudly, and the next pod start after the
+        // secret is provisioned upgrades it. A deliberate deployment-ordering allowance, matching
+        // the one ADR-0576 makes on the Chess Tactics side, and removable once every secret ships.
+        confidential = false;
+        if (!testMode) {
+          console.error(
+            `[oauth-clients] ${client.clientId} is declared confidential but ${client.secretEnv} `
+            + "is unset; registering it PUBLIC for now. Provision the secret and restart to "
+            + "complete the upgrade.",
+          );
+        }
       }
     }
 
@@ -169,10 +185,10 @@ export async function reconcileOAuthClients(
       clientId: client.clientId,
       name: client.name,
       redirectUris: client.redirectUris,
-      public: client.isPublic,
+      public: !confidential,
       skipConsent: client.skipConsent,
       disabled: false,
-      type: client.isPublic ? "public" : "web",
+      type: confidential ? "web" : "public",
       // PKCE is required of every client here, confidential ones included. It costs a
       // confidential client nothing and closes code interception independently of the secret.
       requirePKCE: true,

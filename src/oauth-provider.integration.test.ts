@@ -42,10 +42,11 @@ function platformClaims(user: Record<string, unknown>): Record<string, unknown> 
  * source the production migration must be generated from, so a mismatch between what the plugin
  * expects and what the tables provide fails here rather than in front of Grafana.
  */
-async function bootProvider() {
+async function bootProvider({ withChessTacticsSecret = true } = {}) {
   const { dialect, client } = await KyselyPGlite.create();
   process.env.OIDC_GRAFANA_CLIENT_SECRET = "grafana-test-secret";
-  process.env.OIDC_CHESS_TACTICS_CLIENT_SECRET = "chess-tactics-test-secret";
+  if (withChessTacticsSecret) process.env.OIDC_CHESS_TACTICS_CLIENT_SECRET = "chess-tactics-test-secret";
+  else delete process.env.OIDC_CHESS_TACTICS_CLIENT_SECRET;
 
   const auth = betterAuth({
     baseURL: BASE_URL,
