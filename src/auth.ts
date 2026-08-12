@@ -1,9 +1,34 @@
 import { betterAuth } from "better-auth";
-import { jwt, oidcProvider } from "better-auth/plugins";
+import { jwt } from "better-auth/plugins";
+import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "./db/client.js";
 import { getManagedOrigins } from "./managed-origins.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
+import { OAUTH_CLIENT_IDS, hashClientSecret } from "./oauth-clients.js";
+
+/**
+ * The platform claims every relying party authorizes from.
+ *
+ * `role` is what Grafana's `role_attribute_path` reads to decide Admin vs Viewer. `groups` mirrors
+ * it as a single-element array because Argo CD's RBAC matches on a groups claim, so both authorize
+ * off the same platform role without a bespoke mapping. `apps` is the per-user prefs blob, parsed
+ * so the wire shape is an object rather than a JSON-encoded string.
+ *
+ * Shared by the id_token and userinfo hooks deliberately: they were one hook before the migration,
+ * and letting them drift apart is how an RP ends up authorizing differently depending on which
+ * surface it read.
+ */
+function platformClaims(user: Record<string, unknown>): Record<string, unknown> {
+  let apps: Record<string, unknown> = {};
+  try {
+    apps = JSON.parse(typeof user.apps === "string" ? user.apps : "{}");
+  } catch {
+    // Bad JSON in the apps column must not break a token; same defence as definePayload above.
+  }
+  const role = typeof user.role === "string" ? user.role : "user";
+  return { role, groups: [role], apps };
+}
 
 const baseUrl = process.env.BASE_URL ?? "https://auth.romaine.life";
 
@@ -188,133 +213,63 @@ export const auth = betterAuth({
     // Mounted under /api/auth/* alongside the rest of Better Auth, so the
     // discovery doc is at /api/auth/.well-known/openid-configuration and
     // the authorize/token/userinfo endpoints are at /api/auth/oauth2/*.
-    // RPs configure these URLs explicitly (Grafana doesn't autodiscover),
-    // so the non-root prefix doesn't matter.
     //
-    // `useJWTPlugin: true` is the load-bearing flag: id_tokens are signed
-    // with the same RS256 key the JWT plugin manages, so an RP can verify
-    // id_tokens against /api/auth/jwks — identical to how an MCP server
-    // verifies a bot token. One JWKS, one trust root, both paths.
+    // Migrated from the deprecated `oidcProvider` plugin, which had two defects its
+    // own latest release still carries and never will not:
     //
-    // `trustedClients` registers Grafana statically without a DB row.
-    // Adding a future RP is a 6-line append here + a KV secret + a deploy.
-    // We deliberately do NOT enable dynamic client registration — there is
-    // no scenario today where an unknown party should be able to mint
-    // itself an OAuth client against this provider.
+    //   - refresh rotation without invalidation. The old plugin created a new token row
+    //     and left the previous refresh token valid until its own expiry, so a replayed
+    //     token produced no conflict and rotation bought nothing (RFC 9700 §4.14.2). It
+    //     also re-stamped the expiry on every refresh, so an active chain never expired
+    //     at all — which draft-ietf-oauth-browser-based-apps-26 §6.3.2.3-4 forbids.
+    //   - `auth_time` emitted in MILLISECONDS where OIDC Core §2 requires seconds, so a
+    //     relying party's freshness check saw a time in the far future and passed
+    //     unconditionally.
     //
-    // Note: this plugin is marked @deprecated upstream in favor of
-    // @better-auth/oauth-provider (not yet published for v1.6). Track the
-    // migration when 2.0 lands. Removal is gated on a major version bump
-    // so there is no urgency.
-    oidcProvider({
-      // Reuse the existing landing-page sign-in surface; an RP redirect
-      // that hits `prompt=login` lands the user here, the Microsoft/Google
-      // buttons sign them in, and the OIDC authorize flow resumes from the
-      // session cookie that gets set.
+    // This plugin revokes the presented refresh token on rotation, invalidates the whole
+    // family when a revoked one is replayed, carries the original `exp` forward instead
+    // of extending it, and reports `auth_time` in seconds.
+    oauthProvider({
+      // Reuse the existing landing-page sign-in surface; an RP redirect that hits
+      // `prompt=login` lands the user here, the Microsoft/Google buttons sign them in,
+      // and the authorize flow resumes from the session cookie that gets set.
       loginPage: "/",
-      useJWTPlugin: true,
-      requirePKCE: true,
-      allowPlainCodeChallengeMethod: false,
-      storeClientSecret: "hashed",
+      // Every client registered here is first-party and skips consent, so this page is
+      // never reached in practice. It is required by the plugin and pointing it at the
+      // landing page keeps a mis-registered future client on a real page rather than a 404.
+      consentPage: "/",
+      // Ours, not the plugin's: clients are declared in code and reconciled at boot rather than
+      // registered through an API, so the seeding path needs the same function. See
+      // src/oauth-clients.ts for why an unsalted SHA-256 is the right primitive for a
+      // machine-generated secret and would be the wrong one for a password.
+      storeClientSecret: { hash: async (secret: string) => hashClientSecret(secret) },
+      // Access and refresh tokens are hashed at rest, so a read of the token tables
+      // yields nothing replayable — the same reasoning as Chess Tactics' own session
+      // store (ADR-0576).
+      storeTokens: "hashed",
       allowDynamicClientRegistration: false,
-      scopes: ["openid", "email", "profile"],
+      allowUnauthenticatedClientRegistration: false,
+      scopes: ["openid", "email", "profile", "offline_access"],
       accessTokenExpiresIn: 3600,
-      refreshTokenExpiresIn: 60 * 60 * 24 * 7,
-      // Surface the platform `role` claim + the `apps` per-user prefs blob
-      // on the id_token and the /oauth2/userinfo response. Matches the JWT
-      // plugin's `definePayload` shape above so an RP's role-mapping
-      // expression is identical whether the JWT came from an OIDC login
-      // (browser path) or a bot/service token (API path). `role` is what
-      // Grafana's role_attribute_path reads to decide Admin vs Viewer.
-      getAdditionalUserInfoClaim: (user) => {
-        const u = user as typeof user & { role?: string; apps?: string };
-        let apps: Record<string, unknown> = {};
-        try {
-          apps = JSON.parse(u.apps ?? "{}");
-        } catch {
-          // Bad JSON in apps column shouldn't break the id_token; same
-          // defense as the JWT plugin's definePayload above.
-        }
-        return {
-          role: u.role ?? "user",
-          // `groups` mirrors `role` as a single-element array. Grafana reads
-          // `role` directly via role_attribute_path; Argo CD's RBAC matches
-          // on a groups claim (`scopes: '[groups]'` → `g, admin, role:admin`),
-          // so surfacing the role here as `groups` lets Argo CD authorize off
-          // the same platform role without a bespoke claim mapping.
-          groups: [u.role ?? "user"],
-          apps,
-        };
-      },
-      trustedClients: [
-        {
-          clientId: "grafana",
-          clientSecret: fromEnv("OIDC_GRAFANA_CLIENT_SECRET"),
-          name: "Grafana",
-          type: "web",
-          metadata: null,
-          disabled: false,
-          redirectUrls: ["https://grafana.romaine.life/login/generic_oauth"],
-          // First-party app; no consent screen on first login. The same
-          // user has already consented to using their romaine.life identity
-          // simply by signing into auth.romaine.life — bouncing them
-          // through a consent page for an internal tool is friction with
-          // no security value.
-          skipConsent: true,
-        },
-        {
-          clientId: "argocd",
-          // Public client — no secret. Argo CD talks to us DIRECTLY as a
-          // native OIDC relying party (configs.cm `oidc.config`,
-          // enablePKCEAuthentication: true), exactly like Grafana, not
-          // proxied through its bundled Dex. Argo CD only supports PKCE as a
-          // public client, and our provider requires PKCE, so the code
-          // challenge — not a client secret — authenticates the exchange.
-          // (Dex stays deployed solely for the mcp-argocd SA-token exchange
-          // via the aks-sa connector; it is not in this human-login path.)
-          type: "public",
-          name: "Argo CD",
-          metadata: null,
-          disabled: false,
-          // Argo CD's native OIDC callback (NOT the /api/dex/callback used by
-          // the old Dex-proxied setup). It autodiscovers our endpoints from
-          // the root discovery doc. The localhost entry is the `argocd login
-          // --sso` CLI loopback.
-          redirectUrls: [
-            "https://argocd.romaine.life/auth/callback",
-            "http://localhost:8085/auth/callback",
-          ],
-          skipConsent: true,
-        },
-        {
-          clientId: "ambience",
-          // Public client — no secret. ambience-authority talks to us directly
-          // as a native OIDC relying party (authorization-code + PKCE); its
-          // backend (BFF) does the code exchange and verifies the id_token
-          // (aud="ambience", iss=https://auth.romaine.life). Replaces the old
-          // standalone single-tenant `ambience-oauth` Entra app registration,
-          // which rejected personal Microsoft accounts.
-          type: "public",
-          name: "Ambience",
-          metadata: null,
-          disabled: false,
-          redirectUrls: ["https://ambience.romaine.life/auth/callback"],
-          skipConsent: true,
-        },
-        {
-          clientId: "chess-tactics",
-          // Public BFF client — no distributed secret. The Chess Tactics
-          // backend performs authorization-code + PKCE, verifies the id_token
-          // against this provider's JWKS, and keeps access/refresh tokens in
-          // host-only HttpOnly cookies on chess-tactics.com.
-          type: "public",
-          name: "Chess Tactics",
-          metadata: null,
-          disabled: false,
-          redirectUrls: ["https://chess-tactics.com/api/auth/callback"],
-          skipConsent: true,
-        },
-      ],
+      // The authorization server's MAXIMUM, not any one app's session length. Chess
+      // Tactics holds 90-day sessions (ADR-0576 decision 1) and renews beneath this;
+      // Grafana and Argo CD each own their own, shorter, session policy
+      // (`login_maximum_lifetime_duration` and Argo's own JWT expiry respectively).
+      // Neither package offers a per-client lifetime, and this is why that is fine:
+      // session length belongs to the relying party, the ceiling belongs here.
+      refreshTokenExpiresIn: 60 * 60 * 24 * 90,
+      // Held in memory so an authorize call costs no client lookup. The rows themselves
+      // are reconciled at boot by `reconcileOAuthClients` in src/oauth-clients.ts —
+      // clients are DATA in this plugin, where they were static config in the old one.
+      cachedTrustedClients: new Set(OAUTH_CLIENT_IDS),
+      // The platform claims every relying party's authorization depends on. The old
+      // plugin fed both surfaces from one hook; this one splits them, and BOTH must be
+      // wired or the failure is silent: Grafana reads `role` through
+      // `role_attribute_path` and would quietly demote every user to Viewer, and Argo
+      // CD matches RBAC on `groups` (`scopes: '[groups]'` → `g, admin, role:admin`) and
+      // would match no rule at all. Nothing errors in either case.
+      customIdTokenClaims: ({ user }) => platformClaims(user),
+      customUserInfoClaims: ({ user }) => platformClaims(user),
     }),
   ],
 });

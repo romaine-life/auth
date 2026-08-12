@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, integer, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, integer, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 
 // Schema matches Better Auth's expected tables (regenerate with
 // `npx @better-auth/cli generate` if the auth.ts config gains plugins
@@ -93,56 +93,88 @@ export const cliDeviceGrant = pgTable(
   }),
 );
 
-// OIDC provider plugin: lets auth.romaine.life act as an OAuth2/OIDC
-// authorization server for off-the-shelf relying parties (today: Grafana
-// at grafana.romaine.life). Endpoints live under /api/auth/oauth2/* and
-// /api/auth/.well-known/openid-configuration. id_tokens are RS256-signed
-// by the JWT plugin's key (useJWTPlugin: true in auth.ts), so RPs verify
-// against the same /api/auth/jwks the rest of romaine.life uses.
+// OAuth 2.1 provider (@better-auth/oauth-provider). Replaces the deprecated `oidcProvider`
+// plugin, whose tables are renamed to `*_legacy` by drizzle/0002 and dropped once the rollout is
+// confirmed. Two defects motivated the change and neither was fixable in place: refresh rotation
+// that never invalidated the previous token (RFC 9700 §4.14.2), and `auth_time` emitted in
+// milliseconds where OIDC Core §2 requires seconds.
 //
-// First-party romaine.life apps (homepage, workout, glimmung, etc.)
-// continue to use the shared `.romaine.life` session cookie + JWKS
-// verification — they don't go through these tables. Only standards-only
-// consumers (Grafana, future Argo CD UI) touch the OIDC surface.
+// Better Auth resolves each model to the table exported under the SAME NAME here, so these export
+// names are load-bearing: `oauthClient` must be `oauthClient`. The physical names stay snake_case
+// to match every other table in this database. That mapping is exactly what the generated DDL
+// does NOT know about — see scripts/emit-oauth-migration.mjs and the parity test that pins it.
 //
-// Trusted clients are configured in-memory via the plugin's
-// `trustedClients` option in auth.ts; for them the `oauth_application`
-// table is unused. The table is kept for the plugin's runtime DB queries
-// and for any future dynamic-registration consumer.
-export const oauthApplication = pgTable("oauth_application", {
+// `string[]` fields are jsonb, which is what the generator emits and what the drizzle adapter
+// reads back as arrays.
+export const oauthClient = pgTable("oauth_client", {
   id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  icon: text("icon"),
-  metadata: text("metadata"),
   clientId: text("client_id").notNull().unique(),
   clientSecret: text("client_secret"),
-  redirectUrls: text("redirect_urls").notNull(),
-  type: text("type").notNull(),
-  disabled: boolean("disabled").notNull().default(false),
+  disabled: boolean("disabled").default(false),
+  skipConsent: boolean("skip_consent"),
+  enableEndSession: boolean("enable_end_session"),
+  subjectType: text("subject_type"),
+  scopes: jsonb("scopes").$type<string[]>(),
   userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  name: text("name"),
+  uri: text("uri"),
+  icon: text("icon"),
+  contacts: jsonb("contacts").$type<string[]>(),
+  tos: text("tos"),
+  policy: text("policy"),
+  softwareId: text("software_id"),
+  softwareVersion: text("software_version"),
+  softwareStatement: text("software_statement"),
+  redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+  postLogoutRedirectUris: jsonb("post_logout_redirect_uris").$type<string[]>(),
+  tokenEndpointAuthMethod: text("token_endpoint_auth_method"),
+  grantTypes: jsonb("grant_types").$type<string[]>(),
+  responseTypes: jsonb("response_types").$type<string[]>(),
+  public: boolean("public"),
+  type: text("type"),
+  requirePKCE: boolean("require_pkce"),
+  referenceId: text("reference_id"),
+  metadata: jsonb("metadata"),
+});
+
+// `revoked` is the column the whole migration is for. Rotation stamps it on the token just
+// presented; presenting a stamped token again revokes the entire family for that (client, user),
+// which is what makes rotation detect replay instead of merely issuing new strings.
+export const oauthRefreshToken = pgTable("oauth_refresh_token", {
+  id: text("id").primaryKey(),
+  token: text("token").notNull().unique(),
+  clientId: text("client_id").notNull().references(() => oauthClient.clientId, { onDelete: "cascade" }),
+  sessionId: text("session_id").references(() => session.id, { onDelete: "set null" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  referenceId: text("reference_id"),
+  expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  revoked: timestamp("revoked"),
+  authTime: timestamp("auth_time"),
+  scopes: jsonb("scopes").$type<string[]>().notNull(),
 });
 
 export const oauthAccessToken = pgTable("oauth_access_token", {
   id: text("id").primaryKey(),
-  accessToken: text("access_token").notNull().unique(),
-  refreshToken: text("refresh_token").notNull().unique(),
-  accessTokenExpiresAt: timestamp("access_token_expires_at").notNull(),
-  refreshTokenExpiresAt: timestamp("refresh_token_expires_at").notNull(),
-  clientId: text("client_id").notNull(),
+  token: text("token").notNull().unique(),
+  clientId: text("client_id").notNull().references(() => oauthClient.clientId, { onDelete: "cascade" }),
+  sessionId: text("session_id").references(() => session.id, { onDelete: "set null" }),
   userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
-  scopes: text("scopes").notNull(),
+  referenceId: text("reference_id"),
+  refreshId: text("refresh_id").references(() => oauthRefreshToken.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  scopes: jsonb("scopes").$type<string[]>().notNull(),
 });
 
 export const oauthConsent = pgTable("oauth_consent", {
   id: text("id").primaryKey(),
-  clientId: text("client_id").notNull(),
-  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
-  scopes: text("scopes").notNull(),
-  consentGiven: boolean("consent_given").notNull(),
+  clientId: text("client_id").notNull().references(() => oauthClient.clientId, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  referenceId: text("reference_id"),
+  scopes: jsonb("scopes").$type<string[]>().notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
