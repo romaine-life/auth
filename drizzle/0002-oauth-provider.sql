@@ -130,4 +130,14 @@ CREATE TABLE IF NOT EXISTS "oauth_consent" (
 CREATE INDEX IF NOT EXISTS "oauth_consent_client_id_idx" ON "oauth_consent"("client_id");
 CREATE INDEX IF NOT EXISTS "oauth_consent_user_id_idx" ON "oauth_consent"("user_id");
 
+-- The application connects as `auth`, and every pre-existing table in this database is OWNED by
+-- that role rather than merely granted to it. Tables created by `psql -U postgres` are owned by
+-- postgres, and the app then gets `permission denied` on its very first query — which is exactly
+-- what happened on the first rollout of this migration, crash-looping the new pod until ownership
+-- was corrected by hand. Setting it here makes the migration complete on its own terms.
+ALTER TABLE "oauth_client" OWNER TO auth;
+ALTER TABLE "oauth_refresh_token" OWNER TO auth;
+ALTER TABLE "oauth_access_token" OWNER TO auth;
+ALTER TABLE "oauth_consent" OWNER TO auth;
+
 COMMIT;

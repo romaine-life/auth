@@ -333,9 +333,13 @@ test("the shipped migration produces exactly the tables the drizzle models map t
   const { client } = await KyselyPGlite.create();
   const sql = readFileSync(new URL("../drizzle/0002-oauth-provider.sql", import.meta.url), "utf8");
 
-  // The migration references `user` and `session`, which exist in production. Stand them up so
-  // the foreign keys resolve.
+  // Stand up what the migration expects to find in production: the `user` and `session` tables
+  // its foreign keys reference, and the `auth` role it transfers ownership to. That role is not
+  // incidental — the application connects as it, every existing table is owned by it, and the
+  // first rollout of this migration crash-looped precisely because tables created by `postgres`
+  // were not.
   await client.exec(`
+    CREATE ROLE auth;
     CREATE TABLE "user" ("id" text PRIMARY KEY);
     CREATE TABLE "session" ("id" text PRIMARY KEY);
   `);
@@ -369,6 +373,15 @@ test("the shipped migration produces exactly the tables the drizzle models map t
       declared,
       `${table} columns must match the ${model} drizzle model exactly`,
     );
+  }
+
+  // Ownership transfers to the application's role, or the app gets `permission denied` on its
+  // first query and the pod never becomes ready.
+  const owners = await client.query<{ tablename: string; tableowner: string }>(
+    "SELECT tablename, tableowner FROM pg_tables WHERE tablename LIKE 'oauth%' ORDER BY tablename",
+  );
+  for (const row of owners.rows) {
+    assert.equal(row.tableowner, "auth", `${row.tablename} must be owned by the app role`);
   }
 
   // Expand/contract: the colliding legacy tables are moved aside, never dropped here.
