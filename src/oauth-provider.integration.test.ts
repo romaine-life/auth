@@ -104,14 +104,18 @@ type Harness = Awaited<ReturnType<typeof bootProvider>>;
 async function authorizeCode(
   harness: Harness,
   cookie: string,
-  { scope = "openid profile email offline_access", clientId = "chess-tactics" } = {},
+  {
+    scope = "openid profile email offline_access",
+    clientId = "chess-tactics",
+    redirectUri = "https://chess-tactics.com/api/auth/callback",
+  } = {},
 ) {
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const query = new URLSearchParams({
     client_id: clientId,
     response_type: "code",
-    redirect_uri: "https://chess-tactics.com/api/auth/callback",
+    redirect_uri: redirectUri,
     scope,
     state: "state-value",
     nonce: "nonce-value",
@@ -171,9 +175,19 @@ test("the generated schema applies and the declared clients reconcile into it", 
     clients.rows.map((row) => row.client_id),
     ["ambience", "argocd", "chess-tactics", "grafana"],
   );
-  // ADR-0576: a BFF is a confidential client. Chess Tactics was registered public.
+  // Grafana is confidential outright: it has always held a secret.
+  const grafana = clients.rows.find((row) => row.client_id === "grafana");
+  assert.equal(grafana?.public, false, "grafana must be registered confidential");
+
+  // Chess Tactics is mid-promotion (ADR-0576 makes it confidential; `enforceConfidential: false`
+  // keeps it accepting both while the relying party catches up). Public WITH a secret on file is
+  // that state, and it is the only one that survives the switchover.
   const chess = clients.rows.find((row) => row.client_id === "chess-tactics");
-  assert.equal(chess?.public, false, "chess-tactics must be registered confidential");
+  assert.equal(chess?.public, true, "chess-tactics stays public until the promotion is enforced");
+  const chessSecret = await client.query<{ has_secret: boolean }>(
+    `SELECT ("clientSecret" IS NOT NULL) AS has_secret FROM "oauthClient" WHERE "clientId" = 'chess-tactics'`,
+  );
+  assert.equal(chessSecret.rows[0].has_secret, true, "with its secret already on file");
 });
 
 test("reconciliation is idempotent and never orphans a client row", async () => {
@@ -288,18 +302,39 @@ test("rotation invalidates the presented refresh token, and replay revokes the f
 test("a confidential client must authenticate itself at the token endpoint", async () => {
   const harness = await bootProvider();
   const cookie = await signUpUser(harness);
-  const { code, verifier } = await authorizeCode(harness, cookie, { scope: "openid profile email" });
+  // Grafana, because it is ENFORCED confidential. Chess Tactics is mid-promotion and deliberately
+  // accepts both right now; asserting this against it would pass for the wrong reason once the
+  // promotion completes and fail for the wrong reason before then.
+  const { code, verifier } = await authorizeCode(harness, cookie, {
+    clientId: "grafana",
+    redirectUri: "https://grafana.romaine.life/login/generic_oauth",
+    scope: "openid profile email",
+  });
 
-  // No client_secret. PKCE alone must not suffice for a client registered confidential — that is
-  // exactly what ADR-0576 promoted Chess Tactics off `type: "public"` to obtain.
   const bare = await tokenRequest(harness, {
     grant_type: "authorization_code",
     code,
-    redirect_uri: "https://chess-tactics.com/api/auth/callback",
-    client_id: "chess-tactics",
+    redirect_uri: "https://grafana.romaine.life/login/generic_oauth",
+    client_id: "grafana",
     code_verifier: verifier,
   });
   assert.ok(bare.status >= 400, `a confidential client must authenticate: got ${bare.status}`);
+
+  // And succeeds with it, so the failure above is about the secret and not the request shape.
+  const { code: second, verifier: secondVerifier } = await authorizeCode(harness, cookie, {
+    clientId: "grafana",
+    redirectUri: "https://grafana.romaine.life/login/generic_oauth",
+    scope: "openid profile email",
+  });
+  const authenticated = await tokenRequest(harness, {
+    grant_type: "authorization_code",
+    code: second,
+    redirect_uri: "https://grafana.romaine.life/login/generic_oauth",
+    client_id: "grafana",
+    client_secret: "grafana-test-secret",
+    code_verifier: secondVerifier,
+  });
+  assert.equal(authenticated.status, 200, await authenticated.clone().text());
 });
 
 test("an authorization code is redeemable exactly once", async () => {
@@ -396,4 +431,36 @@ test("the shipped migration produces exactly the tables the drizzle models map t
   assert.match(sql, /RENAME TO "oauth_access_token_legacy"/);
   assert.match(sql, /RENAME TO "oauth_consent_legacy"/);
   assert.ok(!/DROP TABLE/i.test(sql), "0002 must not drop anything — rollback depends on it");
+});
+
+test("a client mid-promotion accepts a request with the secret and one without", async () => {
+  // Promoting public -> confidential has no safe order on its own: the provider refuses a
+  // confidential client that sends no secret, and refuses a secret from a client with none
+  // registered. Flip either side first and every login of that client breaks until the other
+  // catches up. Public-with-a-secret-on-file is the state that accepts both, and this proves it
+  // — because the whole three-deploy promotion rests on it being true.
+  const harness = await bootProvider();
+  const cookie = await signUpUser(harness);
+
+  const redeem = async (extra: Record<string, string>) => {
+    const { code, verifier } = await authorizeCode(harness, cookie);
+    return tokenRequest(harness, {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: "https://chess-tactics.com/api/auth/callback",
+      client_id: "chess-tactics",
+      code_verifier: verifier,
+      ...extra,
+    });
+  };
+
+  const withSecret = await redeem({ client_secret: "chess-tactics-test-secret" });
+  assert.equal(withSecret.status, 200, `secret must be accepted: ${await withSecret.clone().text()}`);
+
+  const withoutSecret = await redeem({});
+  assert.equal(
+    withoutSecret.status,
+    200,
+    `and a relying party that has not been given it yet must still work: ${await withoutSecret.clone().text()}`,
+  );
 });

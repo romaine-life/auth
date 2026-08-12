@@ -40,6 +40,25 @@ export interface OAuthClientDeclaration {
   /** Environment variable holding the secret, for confidential clients only. */
   secretEnv?: string;
   /**
+   * Whether the secret is REQUIRED yet, or merely accepted.
+   *
+   * Promoting a client from public to confidential has no safe order on its own. The provider
+   * refuses a request with no secret from a confidential client, and refuses a secret from a
+   * client with none registered — so flipping either side first breaks every login of that client
+   * until the other side catches up.
+   *
+   * A client that is public AND has a secret on file is the state that accepts both, so the
+   * promotion goes in three deploys:
+   *
+   *   1. register the secret here with `enforceConfidential: false` — old and new both work;
+   *   2. ship the relying party sending it;
+   *   3. set this true, and the secret becomes mandatory.
+   *
+   * Expand/contract, the same shape as the table rename in drizzle/0002, and for the same reason:
+   * there is a window where both must be true at once.
+   */
+  enforceConfidential?: boolean;
+  /**
    * First-party apps skip consent: the same person has already consented to using their
    * romaine.life identity by signing in here, and bouncing them through a consent page for an
    * internal tool is friction with no security value.
@@ -92,6 +111,10 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
     // which proves nothing about WHICH application is redeeming a code.
     isPublic: false,
     secretEnv: "OIDC_CHESS_TACTICS_CLIENT_SECRET",
+    // Step 1 of the promotion. The secret is stored and accepted; it is not yet required, so a
+    // Chess Tactics that has not been given it yet keeps working. Flip to true once the deployed
+    // Chess Tactics is confirmed sending it.
+    enforceConfidential: false,
     redirectUris: ["https://chess-tactics.com/api/auth/callback"],
     skipConsent: true,
   },
@@ -181,14 +204,19 @@ export async function reconcileOAuthClients(
       }
     }
 
+    // A client mid-promotion stays PUBLIC while holding a secret: that is the one state the
+    // provider accepts both a request with the secret and one without, which is what makes the
+    // switchover survivable.
+    const enforced = confidential && client.enforceConfidential !== false;
+
     const desired = {
       clientId: client.clientId,
       name: client.name,
       redirectUris: client.redirectUris,
-      public: !confidential,
+      public: !enforced,
       skipConsent: client.skipConsent,
       disabled: false,
-      type: confidential ? "web" : "public",
+      type: enforced ? "web" : "public",
       // PKCE is required of every client here, confidential ones included. It costs a
       // confidential client nothing and closes code interception independently of the secret.
       requirePKCE: true,
