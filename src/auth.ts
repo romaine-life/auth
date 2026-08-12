@@ -185,6 +185,18 @@ export const auth = betterAuth({
         keyPairConfig: { alg: "RS256" },
       },
       jwt: {
+        // The `iss` every relying party checks.
+        //
+        // Left unset, Better Auth falls back to its MOUNT path — `https://auth.romaine.life/api/auth`
+        // — and the OAuth provider inherits it for id_tokens ("default: the value set for the
+        // issuer in the jwt plugin, otherwise the base URL"). Every RP here is configured against
+        // the bare origin, which is also what the root discovery document advertises, so an
+        // id_token carrying the mount path is rejected by all of them. That took production
+        // sign-in down: `oidc_id_token_invalid` on every callback.
+        //
+        // Pinned explicitly rather than relied upon, because the fallback differs between the
+        // token paths and is not something to rediscover.
+        issuer: baseUrl,
         definePayload: ({ user }) => {
           const u = user as typeof user & { role?: string; apps?: string };
           let apps: Record<string, unknown> = {};

@@ -24,7 +24,9 @@ import * as schema from "./db/schema.js";
 import { decodeJwt } from "jose";
 import { OAUTH_CLIENT_IDS, hashClientSecret, reconcileOAuthClients } from "./oauth-clients.js";
 
-const BASE_URL = "http://localhost:3000";
+// A bare origin, as in production. The previous value happened to make the issuer mismatch
+// invisible; the relying parties are configured against the ORIGIN, not the mount path.
+const BASE_URL = "https://auth.example.test";
 
 function platformClaims(user: Record<string, unknown>): Record<string, unknown> {
   let apps: Record<string, unknown> = {};
@@ -60,7 +62,7 @@ async function bootProvider({ withChessTacticsSecret = true } = {}) {
       },
     },
     plugins: [
-      jwt({ jwks: { keyPairConfig: { alg: "RS256" } } }),
+      jwt({ jwks: { keyPairConfig: { alg: "RS256" } }, jwt: { issuer: BASE_URL } }),
       oauthProvider({
         loginPage: "/",
         consentPage: "/",
@@ -224,6 +226,12 @@ test("a real login yields an id_token carrying role, groups and apps", async () 
   assert.ok(skew < 300, `auth_time must be seconds, got ${authTime} (skew ${skew}s)`);
 
   assert.ok(tokens.refresh_token, "offline_access must yield a refresh token");
+
+  // The claim that took production down. Left to its default, Better Auth issues `iss` as its
+  // MOUNT path (`<origin>/api/auth`), while every relying party — and the root discovery document
+  // — is configured against the bare origin, so each one rejects the token. Chess Tactics failed
+  // every callback with `oidc_id_token_invalid`; Argo CD enforces the same match.
+  assert.equal(claims.iss, BASE_URL, "the id_token issuer must be the origin relying parties expect");
 
   // The same claims must appear at userinfo. They were one hook before this migration and are
   // two now; letting them drift is how a relying party authorizes differently by surface.
