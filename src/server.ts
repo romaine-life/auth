@@ -683,7 +683,7 @@ if (TEST_MODE) {
 //      endpoints explicitly and never touches this doc.)
 //
 // The authorize/token/userinfo endpoints below point at the Better-Auth
-// `oidcProvider` routes under /api/auth/oauth2/*. The non-root prefix is
+// `oauthProvider` routes under /api/auth/oauth2/*. The non-root prefix is
 // fine: RPs follow these URLs verbatim from the discovery doc. Class-1
 // (Tailscale) consumers ignore them. Both this doc and the Better-Auth doc
 // advertise the same `issuer` and `jwks_uri`, so any tool that follows
@@ -694,20 +694,30 @@ app.get("/.well-known/openid-configuration", (c) => {
     issuer,
     jwks_uri: `${issuer}/api/auth/jwks`,
     // The oauth2 code-flow endpoints, served by the Better-Auth
-    // `oidcProvider` plugin (src/auth.ts) under /api/auth/oauth2/*.
+    // `oauthProvider` plugin (src/auth.ts) under /api/auth/oauth2/*.
     // Autodiscovering RPs (Argo CD's native OIDC client) need these here at
     // the root because the issuer-match check forbids pointing them at the
     // /api/auth-prefixed discovery doc (whose `issuer` is still the root).
     authorization_endpoint: `${issuer}/api/auth/oauth2/authorize`,
     token_endpoint: `${issuer}/api/auth/oauth2/token`,
     userinfo_endpoint: `${issuer}/api/auth/oauth2/userinfo`,
+    // A relying party that follows discovery to revoke its tokens on sign-out can only find this
+    // here. Chess Tactics does exactly that (ADR-0576) and was silently skipping revocation,
+    // because this hand-built doc omitted the endpoint even after the provider grew one.
+    revocation_endpoint: `${issuer}/api/auth/oauth2/revoke`,
+    end_session_endpoint: `${issuer}/api/auth/oauth2/end-session`,
     id_token_signing_alg_values_supported: ["RS256"],
     subject_types_supported: ["public"],
     response_types_supported: ["code", "id_token"],
     grant_types_supported: ["authorization_code", "refresh_token"],
     code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
-    scopes_supported: ["openid", "profile", "email"],
+    // `none` is how a PUBLIC client declares it authenticates with PKCE alone, which is what
+    // Argo CD and ambience do. Omitting it made this doc describe a server that would refuse
+    // them.
+    token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
+    // offline_access is required for a refresh token to be issued at all, so a client reading
+    // this doc to decide what it may ask for would conclude sessions cannot be renewed.
+    scopes_supported: ["openid", "profile", "email", "offline_access"],
   });
 });
 
