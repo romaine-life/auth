@@ -111,10 +111,10 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
     // which proves nothing about WHICH application is redeeming a code.
     isPublic: false,
     secretEnv: "OIDC_CHESS_TACTICS_CLIENT_SECRET",
-    // Step 1 of the promotion. The secret is stored and accepted; it is not yet required, so a
-    // Chess Tactics that has not been given it yet keeps working. Flip to true once the deployed
-    // Chess Tactics is confirmed sending it.
-    enforceConfidential: false,
+    // Step 3, the contract half. The deployed Chess Tactics carries OIDC_CLIENT_SECRET and sends
+    // it on every token request, so the secret is now REQUIRED and PKCE alone will not redeem a
+    // code for this client. Leaving this false would have kept a confidential-by-declaration
+    // client permanently accepting unauthenticated redemptions.
     redirectUris: ["https://chess-tactics.com/api/auth/callback"],
     skipConsent: true,
   },
