@@ -77,6 +77,14 @@ spec:
                 secretKeyRef:
                   name: auth-oauth
                   key: OIDC_GRAFANA_CLIENT_SECRET
+            # Chess Tactics relying party. Absent, reconcileOAuthClients registers that client
+            # PUBLIC and logs it rather than refusing to start — one unprovisioned client must not
+            # take sign-in away from every other one.
+            - name: OIDC_CHESS_TACTICS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: OIDC_CHESS_TACTICS_CLIENT_SECRET
             # Glimmung-managed slot origin admin surface
             # (/api/admin/origins/*). Inbound auth: k8s SA tokens signed by
             # the cluster OIDC issuer below, with audience = this service.
