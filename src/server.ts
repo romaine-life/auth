@@ -6,6 +6,7 @@ import { logger } from "hono/logger";
 import { setCookie, deleteCookie, getCookie } from "hono/cookie";
 import { and, eq, desc } from "drizzle-orm";
 import { auth, resolveAllTrustedOrigins } from "./auth.js";
+import { OAUTH_CLIENT_IDS, reconcileOAuthClients, type AuthWithAdapter } from "./oauth-clients.js";
 import { adminLoginRedirectPath } from "./admin-redirect.js";
 import { singleProviderSignInPath } from "./oidc-login-provider.js";
 import { db } from "./db/client.js";
@@ -3642,7 +3643,33 @@ app.post("/sign-out", async (c) => {
   }
 });
 
+// Relying parties are DATA for @better-auth/oauth-provider, where the old plugin took them as
+// static config. This puts the four declared in src/oauth-clients.ts into the database before the
+// first authorize call can arrive.
+//
+// It runs BEFORE serve() and is awaited: a pod that answers /oauth2/authorize for a client it has
+// not yet written would send the person to an error page mid-login. A confidential client whose
+// secret is missing throws here and the process exits, which is the correct outcome — registering
+// it without one would silently downgrade it to something anybody could impersonate.
+//
+// Idempotent, because every pod start and every rollout runs it.
 const port = Number(process.env.PORT ?? 3000);
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`auth listening on :${info.port}`);
+
+async function start(): Promise<void> {
+  if (process.env.TEST_MODE !== "true") {
+    // The cast is deliberate and confined to this line. Better Auth's `Auth` type is generic over
+    // the entire options object, so its adapter's signatures never match a hand-written structural
+    // type exactly. reconcileOAuthClients depends on three adapter methods and nothing else; see
+    // AuthWithAdapter.
+    await reconcileOAuthClients(auth as unknown as AuthWithAdapter);
+    console.log(`oauth clients reconciled: ${OAUTH_CLIENT_IDS.join(", ")}`);
+  }
+  serve({ fetch: app.fetch, port }, (info) => {
+    console.log(`auth listening on :${info.port}`);
+  });
+}
+
+start().catch((error) => {
+  console.error("[startup] failed:", error);
+  process.exit(1);
 });

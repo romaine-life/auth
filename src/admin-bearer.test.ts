@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SignJWT, exportJWK, generateKeyPair, type JSONWebKeySet, type KeyLike } from "jose";
+import { SignJWT, exportJWK, generateKeyPair, type JSONWebKeySet } from "jose";
 import { verifyAdminBearerJwt } from "./admin-bearer.js";
 
 // Verifies the admin bearer-token contract that lets mcp-auth (forwarding a
@@ -27,7 +27,8 @@ function mint(opts: {
   role?: string;
   issuer?: string;
   expiresIn?: string;
-  signWith?: KeyLike | Uint8Array;
+  // jose v6 removed the KeyLike alias; a signing key is a CryptoKey (or raw bytes for HMAC).
+  signWith?: CryptoKey | Uint8Array;
   email?: string;
 }) {
   const jwt = new SignJWT({ role: opts.role ?? "admin", email: opts.email ?? "a@b.com" })
