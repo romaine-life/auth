@@ -23,6 +23,7 @@ import { getTableColumns } from "drizzle-orm";
 import * as schema from "./db/schema.js";
 import { decodeJwt } from "jose";
 import { OAUTH_CLIENT_IDS, hashClientSecret, reconcileOAuthClients } from "./oauth-clients.js";
+import { signedOAuthQuery } from "./oidc-login-provider.js";
 
 // A bare origin, as in production. The previous value happened to make the issuer mismatch
 // invisible; the relying parties are configured against the ORIGIN, not the mount path.
@@ -255,6 +256,105 @@ test("a real login yields an id_token carrying role, groups and apps", async () 
   const info = await userinfo.json() as Record<string, unknown>;
   assert.equal(info.role, "admin", "userinfo must carry the same role as the id_token");
   assert.deepEqual(info.groups, ["admin"], "userinfo must carry the same groups as the id_token");
+});
+
+/** The authorize request a relying party makes, and the PKCE verifier behind it. */
+function authorizeRequest() {
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  return {
+    verifier,
+    query: new URLSearchParams({
+      client_id: "chess-tactics",
+      response_type: "code",
+      redirect_uri: "https://chess-tactics.com/api/auth/callback",
+      scope: "openid profile email offline_access",
+      state: "state-value",
+      nonce: "nonce-value",
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    }),
+  };
+}
+
+/** Sign in with the credentials `signUpUser` created, optionally carrying a pending
+ *  authorization request the way the landing page's sign-in routes do. */
+function signInEmail(harness: Harness, oauthQuery?: string) {
+  return harness.call("/sign-in/email", {
+    method: "POST",
+    // What a browser sends on a form submission. `sec-fetch-mode: navigate` is what makes the
+    // provider answer a resumed authorization with a 302 rather than a JSON redirect body, and
+    // `origin` is required of any state-changing request by Better Auth's CSRF check.
+    headers: { "content-type": "application/json", "sec-fetch-mode": "navigate", origin: BASE_URL },
+    body: JSON.stringify({
+      email: "owner@romaine.life",
+      password: "integration-test-password",
+      ...(oauthQuery ? { oauth_query: oauthQuery } : {}),
+    }),
+  });
+}
+
+test("a signed-out authorize survives the login page and resumes into the relying party", async () => {
+  const harness = await bootProvider();
+  // The account exists; its sign-up session cookie is deliberately never presented, so the
+  // authorize below is the genuinely signed-out case — the one that reaches the login page.
+  await signUpUser(harness);
+
+  const { query, verifier } = authorizeRequest();
+  const bounce = await harness.call(`/oauth2/authorize?${query}`);
+  const loginPage = bounce.headers.get("location");
+  assert.ok(loginPage, `authorize must bounce a signed-out user, got ${bounce.status}`);
+  assert.ok(loginPage.startsWith("/?"), `expected a login-page bounce, got ${loginPage}`);
+  // The predecessor plugin stashed the request in an `oidc_login_prompt` cookie and resumed off
+  // it with no help from the login page. This one sets nothing: the signed query is the only
+  // carrier, which is why the landing page has to forward it (src/oidc-login-provider.ts).
+  assert.deepEqual(bounce.headers.getSetCookie?.() ?? [], [], "the bounce must carry no cookie");
+
+  const pending = signedOAuthQuery(new URL(loginPage, BASE_URL).search);
+  assert.ok(pending, "the landing page must recover a signed authorization request from its URL");
+
+  // Stands in for the Microsoft round trip: the provider resumes on any response that
+  // establishes a session, so this exercises the same hook the social callback does.
+  const resumed = (await signInEmail(harness, pending)).headers.get("location");
+  assert.ok(resumed, "sign-in must resume the authorization, but answered no redirect at all");
+  assert.ok(
+    resumed.startsWith("https://chess-tactics.com/api/auth/callback"),
+    `sign-in must resume into the relying party, got ${resumed}`,
+  );
+  const resumedUrl = new URL(resumed);
+  assert.equal(resumedUrl.searchParams.get("state"), "state-value", "the RP's state must come back");
+
+  // And the code it carries is real, not just a well-shaped redirect.
+  const code = resumedUrl.searchParams.get("code");
+  assert.ok(code, `the resumed redirect must carry a code, got ${resumed}`);
+  const token = await tokenRequest(harness, {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: "https://chess-tactics.com/api/auth/callback",
+    client_id: "chess-tactics",
+    client_secret: "chess-tactics-test-secret",
+    code_verifier: verifier,
+  });
+  assert.equal(token.status, 200, `the resumed code must redeem: ${await token.clone().text()}`);
+});
+
+test("a sign-in that drops the signed query strands the relying party", async () => {
+  // The defect this pins: the landing page redirected to a bare /sign-in/<provider>, so the
+  // user completed a provider login and landed on this service's dashboard while the relying
+  // party waited for a code that never came.
+  const harness = await bootProvider();
+  await signUpUser(harness);
+
+  const { query } = authorizeRequest();
+  const bounce = await harness.call(`/oauth2/authorize?${query}`);
+  assert.ok(bounce.headers.get("location")?.startsWith("/?"), "expected a login-page bounce");
+
+  const stranded = await signInEmail(harness);
+  assert.equal(stranded.status, 200, `sign-in itself must still succeed: ${await stranded.clone().text()}`);
+  assert.ok(
+    !stranded.headers.get("location")?.includes("chess-tactics.com"),
+    "without the signed query there is nothing to resume — this is the bug, pinned",
+  );
 });
 
 test("rotation invalidates the presented refresh token, and replay revokes the family", async () => {
