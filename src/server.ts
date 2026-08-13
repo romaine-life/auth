@@ -8,7 +8,7 @@ import { and, eq, desc } from "drizzle-orm";
 import { auth, resolveAllTrustedOrigins } from "./auth.js";
 import { OAUTH_CLIENT_IDS, reconcileOAuthClients, type AuthWithAdapter } from "./oauth-clients.js";
 import { adminLoginRedirectPath } from "./admin-redirect.js";
-import { singleProviderSignInPath } from "./oidc-login-provider.js";
+import { landingSignInRedirect, signedOAuthQuery } from "./oidc-login-provider.js";
 import { db } from "./db/client.js";
 import { account, cliDeviceGrant, session, user } from "./db/schema.js";
 import {
@@ -2111,13 +2111,18 @@ app.get("/", async (c) => {
   const result = await getAuthState(c);
 
   if (!result) {
-    // A signed-out arrival from a single-provider OIDC client's authorize
-    // bounce skips the provider chooser and goes straight into that
-    // provider's sign-in; the authorize flow resumes from the signed
-    // oidc_login_prompt cookie after the provider callback. See
-    // src/oidc-login-provider.ts.
-    const forcedSignIn = singleProviderSignInPath(c.req.query("client_id"));
+    // A signed-out arrival may be carrying a pending OAuth authorization
+    // request, signed into its own query. Every way out of this page has to
+    // hand that query on as `oauth_query` or the relying party is dropped:
+    // a single-provider client goes straight into its provider's sign-in, and
+    // the chooser's buttons submit it. See src/oidc-login-provider.ts.
+    const search = new URL(c.req.url).search;
+    const forcedSignIn = landingSignInRedirect(search, c.req.query("client_id"));
     if (forcedSignIn) return c.redirect(forcedSignIn);
+    const oauthQuery = signedOAuthQuery(search);
+    const pendingAuthorization = oauthQuery
+      ? html`<input type="hidden" name="oauth_query" value="${oauthQuery}">`
+      : "";
     return c.html(SHELL("Voight-Kampff — auth.romaine.life", html`
       ${topbar("online")}
       <main class="main">
@@ -2140,6 +2145,7 @@ app.get("/", async (c) => {
 
           <div class="signin-stack">
             <form class="signin-form" method="POST" action="/sign-in/microsoft">
+              ${pendingAuthorization}
               <button class="signin-btn" type="submit">
                 ${MSFT_LOGO}
                 <span class="signin-label">Sign in with Microsoft</span>
@@ -2147,6 +2153,7 @@ app.get("/", async (c) => {
               </button>
             </form>
             <form class="signin-form" method="POST" action="/sign-in/google">
+              ${pendingAuthorization}
               <button class="signin-btn" type="submit">
                 ${GOOGLE_LOGO}
                 <span class="signin-label">Sign in with Google</span>
@@ -3539,16 +3546,31 @@ function copySetCookies(from: Response, to: Response): void {
   }
 }
 
+type SocialSignInBody = NonNullable<Parameters<typeof auth.api.signInSocial>[0]>["body"] & { oauth_query?: string };
+
 // Shared social sign-in entrypoint. POST is the form-driven path from
 // this service's own dashboard. GET with a `callbackURL` query param is the
 // cross-app sign-in path: downstream apps (e.g. tank.romaine.life) link
 // here with their post-sign-in URL and the user gets redirected back to
 // the app after the provider completes. Better Auth validates callbackURL
 // against `trustedOrigins` in auth.ts — passing an unlisted origin throws.
-async function socialSignInRedirect(c: Context, provider: "microsoft" | "google", callbackURL: string, prompt?: string) {
+async function socialSignInRedirect(
+  c: Context,
+  provider: "microsoft" | "google",
+  callbackURL: string,
+  prompt?: string,
+  oauthQuery?: string,
+) {
   try {
+    // `oauth_query` is not part of Better Auth's own sign-in schema — it is read
+    // by the oauth-provider plugin's before-hook, which verifies its signature
+    // and stores the pending authorization request in the OAuth state row so the
+    // provider callback can resume it. Without it a signed-out relying-party
+    // login dead-ends on this service's dashboard (src/oidc-login-provider.ts).
+    const body: SocialSignInBody = { provider, callbackURL };
+    if (oauthQuery) body.oauth_query = oauthQuery;
     const authRes = await auth.api.signInSocial({
-      body: { provider, callbackURL },
+      body,
       headers: c.req.raw.headers,
       asResponse: true,
     });
@@ -3614,24 +3636,34 @@ async function signOutCallbackURL(c: Context): Promise<string> {
   return trustedCallbackURL(callbackURL, "/");
 }
 
-app.post("/sign-in/microsoft", (c) => {
+// A pending authorization request reaches these routes two ways: as a form
+// field, from the chooser's buttons, and as a query parameter, from the
+// single-provider redirect. Both are the same signed string, and the provider
+// verifies its signature before honouring it.
+async function pendingAuthorizationQuery(c: Context): Promise<string | undefined> {
+  const fromQuery = c.req.query("oauth_query");
+  if (fromQuery) return fromQuery;
+  if (c.req.method !== "POST") return undefined;
+  try {
+    const body = await c.req.parseBody();
+    const fromBody = body.oauth_query;
+    return typeof fromBody === "string" && fromBody ? fromBody : undefined;
+  } catch {
+    // Sign-in still works without one; only a pending authorization is lost.
+    return undefined;
+  }
+}
+
+async function signInRoute(c: Context, provider: "microsoft" | "google", callbackURL: string) {
+  if (TEST_MODE) return testSignIn(c, callbackURL);
   const prompt = c.req.query("prompt");
-  return TEST_MODE ? testSignIn(c, "/") : socialSignInRedirect(c, "microsoft", "/", prompt);
-});
-app.get("/sign-in/microsoft", (c) => {
-  const callbackURL = c.req.query("callbackURL") ?? "/";
-  const prompt = c.req.query("prompt");
-  return TEST_MODE ? testSignIn(c, callbackURL) : socialSignInRedirect(c, "microsoft", callbackURL, prompt);
-});
-app.post("/sign-in/google", (c) => {
-  const prompt = c.req.query("prompt");
-  return TEST_MODE ? testSignIn(c, "/") : socialSignInRedirect(c, "google", "/", prompt);
-});
-app.get("/sign-in/google", (c) => {
-  const callbackURL = c.req.query("callbackURL") ?? "/";
-  const prompt = c.req.query("prompt");
-  return TEST_MODE ? testSignIn(c, callbackURL) : socialSignInRedirect(c, "google", callbackURL, prompt);
-});
+  return socialSignInRedirect(c, provider, callbackURL, prompt, await pendingAuthorizationQuery(c));
+}
+
+app.post("/sign-in/microsoft", (c) => signInRoute(c, "microsoft", "/"));
+app.get("/sign-in/microsoft", (c) => signInRoute(c, "microsoft", c.req.query("callbackURL") ?? "/"));
+app.post("/sign-in/google", (c) => signInRoute(c, "google", "/"));
+app.get("/sign-in/google", (c) => signInRoute(c, "google", c.req.query("callbackURL") ?? "/"));
 
 app.post("/sign-out", async (c) => {
   const callbackURL = await signOutCallbackURL(c);
