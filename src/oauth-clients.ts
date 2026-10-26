@@ -118,6 +118,16 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
     redirectUris: ["https://chess-tactics.com/api/auth/callback"],
     skipConsent: true,
   },
+  {
+    clientId: "openproject",
+    name: "OpenProject",
+    // Confidential: oauth2-proxy in front of OpenProject on the home NAS holds the secret.
+    // The host resolves only on the home network; the browser carries the redirects.
+    isPublic: false,
+    secretEnv: "OIDC_OPENPROJECT_CLIENT_SECRET",
+    redirectUris: ["https://nas.home.romaine.life:8443/oauth2/callback"],
+    skipConsent: true,
+  },
 ];
 
 export const OAUTH_CLIENT_IDS = OAUTH_CLIENTS.map((client) => client.clientId);

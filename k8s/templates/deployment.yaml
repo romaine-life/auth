@@ -85,6 +85,12 @@ spec:
                 secretKeyRef:
                   name: auth-oauth
                   key: OIDC_CHESS_TACTICS_CLIENT_SECRET
+            # OpenProject relying party (oauth2-proxy on the home NAS). Same degradation as above.
+            - name: OIDC_OPENPROJECT_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: OIDC_OPENPROJECT_CLIENT_SECRET
             # Glimmung-managed slot origin admin surface
             # (/api/admin/origins/*). Inbound auth: k8s SA tokens signed by
             # the cluster OIDC issuer below, with audience = this service.
