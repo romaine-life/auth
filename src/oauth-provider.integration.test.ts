@@ -174,7 +174,7 @@ test("the generated schema applies and the declared clients reconcile into it", 
   );
   assert.deepEqual(
     clients.rows.map((row) => row.client_id),
-    ["ambience", "argocd", "chess-tactics", "grafana"],
+    ["ambience", "argocd", "chess-tactics", "grafana", "openproject"],
   );
   // Grafana is confidential outright: it has always held a secret.
   const grafana = clients.rows.find((row) => row.client_id === "grafana");
@@ -197,7 +197,7 @@ test("reconciliation is idempotent and never orphans a client row", async () => 
   await reconcileOAuthClients(auth as never);
   await reconcileOAuthClients(auth as never);
   const after = await client.query<{ id: string }>('SELECT id FROM "oauthClient" ORDER BY "clientId"');
-  assert.equal(after.rows.length, 4, "reconciliation must not duplicate clients");
+  assert.equal(after.rows.length, OAUTH_CLIENT_IDS.length, "reconciliation must not duplicate clients");
   assert.deepEqual(
     after.rows.map((row) => row.id),
     before.rows.map((row) => row.id),

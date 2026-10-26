@@ -66,7 +66,7 @@ test("a missing client secret degrades that one client, it does not take the ser
   const clients = await client.query<{ client_id: string; public: boolean }>(
     'SELECT "clientId" AS client_id, public FROM "oauthClient" ORDER BY "clientId"',
   );
-  assert.equal(clients.rows.length, 4, "every other client must still be registered");
+  assert.equal(clients.rows.length, OAUTH_CLIENT_IDS.length, "every other client must still be registered");
   const chess = clients.rows.find((row) => row.client_id === "chess-tactics");
   assert.equal(chess?.public, true, "the secretless client falls back to public rather than aborting");
 
