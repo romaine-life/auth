@@ -125,7 +125,7 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
     // The host resolves only on the home network; the browser carries the redirects.
     isPublic: false,
     secretEnv: "OIDC_OPENPROJECT_CLIENT_SECRET",
-    redirectUris: ["https://nas.home.romaine.life:8443/oauth2/callback"],
+    redirectUris: ["https://openproject.home.romaine.life/oauth2/callback"],
     skipConsent: true,
   },
 ];
