@@ -128,6 +128,15 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
     redirectUris: ["https://openproject.home.romaine.life/oauth2/callback"],
     skipConsent: true,
   },
+  {
+    clientId: "spt",
+    name: "spt",
+    // Public: a native app on each home PC (nelsong6/spotify-player), with nowhere to keep a
+    // secret. The loopback IP matches on any port (RFC 8252 §7.3), so spt binds a free one.
+    isPublic: true,
+    redirectUris: ["http://127.0.0.1/callback"],
+    skipConsent: true,
+  },
 ];
 
 export const OAUTH_CLIENT_IDS = OAUTH_CLIENTS.map((client) => client.clientId);

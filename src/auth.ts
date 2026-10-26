@@ -282,6 +282,9 @@ export const auth = betterAuth({
       // would match no rule at all. Nothing errors in either case.
       customIdTokenClaims: ({ user }) => platformClaims(user),
       customUserInfoClaims: ({ user }) => platformClaims(user),
+      // Only a JWT access token (one requested with `resource`) carries claims; spt's
+      // session authorizes on `role` from it. No user means no platform claims.
+      customAccessTokenClaims: ({ user }) => (user ? platformClaims(user) : {}),
     }),
   ],
 });
