@@ -59,6 +59,11 @@ export interface OAuthClientDeclaration {
    */
   enforceConfidential?: boolean;
   /**
+   * A client no longer served. It stays declared so its row is disabled: reconciliation never
+   * deletes, so a client dropped from this list would stay live.
+   */
+  retired?: boolean;
+  /**
    * First-party apps skip consent: the same person has already consented to using their
    * romaine.life identity by signing in here, and bouncing them through a consent page for an
    * internal tool is friction with no security value.
@@ -131,11 +136,11 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
   {
     clientId: "spt",
     name: "spt",
-    // Public: a native app on each home PC (nelsong6/spotify-player), with nowhere to keep a
-    // secret. The loopback IP matches on any port (RFC 8252 §7.3), so spt binds a free one.
+    // Retired 2026-10-27: spt authorizes with its own relay key and signs in to nothing here.
     isPublic: true,
     redirectUris: ["http://127.0.0.1/callback"],
     skipConsent: true,
+    retired: true,
   },
 ];
 
@@ -234,7 +239,7 @@ export async function reconcileOAuthClients(
       redirectUris: client.redirectUris,
       public: !enforced,
       skipConsent: client.skipConsent,
-      disabled: false,
+      disabled: client.retired === true,
       type: enforced ? "web" : "public",
       // PKCE is required of every client here, confidential ones included. It costs a
       // confidential client nothing and closes code interception independently of the secret.
