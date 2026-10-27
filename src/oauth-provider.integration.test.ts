@@ -21,7 +21,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { getTableColumns } from "drizzle-orm";
 import * as schema from "./db/schema.js";
-import { createLocalJWKSet, decodeJwt, jwtVerify } from "jose";
+import { decodeJwt } from "jose";
 import { OAUTH_CLIENT_IDS, hashClientSecret, reconcileOAuthClients } from "./oauth-clients.js";
 import { signedOAuthQuery } from "./oidc-login-provider.js";
 
@@ -76,7 +76,6 @@ async function bootProvider({ withChessTacticsSecret = true } = {}) {
         cachedTrustedClients: new Set(OAUTH_CLIENT_IDS),
         customIdTokenClaims: ({ user }) => platformClaims(user as Record<string, unknown>),
         customUserInfoClaims: ({ user }) => platformClaims(user as Record<string, unknown>),
-        customAccessTokenClaims: ({ user }) => (user ? platformClaims(user as Record<string, unknown>) : {}),
       }),
     ],
   });
@@ -177,6 +176,10 @@ test("the generated schema applies and the declared clients reconcile into it", 
     clients.rows.map((row) => row.client_id),
     ["ambience", "argocd", "chess-tactics", "grafana", "openproject", "spt"],
   );
+  const spt = await client.query<{ disabled: boolean }>(
+    `SELECT disabled FROM "oauthClient" WHERE "clientId" = 'spt'`,
+  );
+  assert.equal(spt.rows[0]?.disabled, true, "a retired client must be disabled");
   // Grafana is confidential outright: it has always held a secret.
   const grafana = clients.rows.find((row) => row.client_id === "grafana");
   assert.equal(grafana?.public, false, "grafana must be registered confidential");
@@ -397,50 +400,6 @@ test("rotation invalidates the presented refresh token, and replay revokes the f
     'SELECT count(*)::text AS count FROM "oauthRefreshToken" WHERE revoked IS NULL',
   );
   assert.equal(live.rows[0].count, "0", "no live refresh token may survive family revocation");
-});
-
-test("spt signs in on any loopback port and refreshes into verifiable access tokens", async () => {
-  const harness = await bootProvider();
-  const cookie = await signUpUser(harness);
-  await harness.client.query("UPDATE \"user\" SET role = 'admin'");
-  // spt binds whatever port is free; the registration names none.
-  const redirectUri = "http://127.0.0.1:53111/callback";
-  const { code, verifier } = await authorizeCode(harness, cookie, {
-    clientId: "spt",
-    redirectUri,
-    scope: "openid offline_access",
-  });
-  // `resource` is what makes the access token a JWT rather than an opaque string, and it must be
-  // sent on every refresh too. The mount path is the only audience the provider accepts by default.
-  const resource = `${BASE_URL}/api/auth`;
-  const jwks = createLocalJWKSet(await (await harness.call("/jwks")).json() as never);
-  const verify = async (accessToken: string) =>
-    (await jwtVerify(accessToken, jwks, { issuer: BASE_URL, audience: resource })).payload;
-
-  const first = await tokenRequest(harness, {
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: redirectUri,
-    client_id: "spt",
-    code_verifier: verifier,
-    resource,
-  });
-  assert.equal(first.status, 200, `token exchange failed: ${await first.clone().text()}`);
-  const tokens = await first.json() as { access_token: string; refresh_token?: string };
-  assert.ok(tokens.refresh_token, "offline_access must yield a refresh token");
-  const claims = await verify(tokens.access_token);
-  assert.equal(claims.azp, "spt");
-  assert.equal(claims.role, "admin", "spt's session authorizes on role from the access token");
-
-  const refreshed = await tokenRequest(harness, {
-    grant_type: "refresh_token",
-    refresh_token: tokens.refresh_token,
-    client_id: "spt",
-    resource,
-  });
-  assert.equal(refreshed.status, 200, `refresh failed: ${await refreshed.clone().text()}`);
-  const renewed = await verify((await refreshed.json() as { access_token: string }).access_token);
-  assert.equal(renewed.role, "admin", "a refreshed access token must carry role too");
 });
 
 test("a confidential client must authenticate itself at the token endpoint", async () => {
