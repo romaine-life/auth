@@ -126,11 +126,14 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
   {
     clientId: "openproject",
     name: "OpenProject",
-    // Confidential: oauth2-proxy in front of OpenProject on the home NAS holds the secret.
-    // The host resolves only on the home network; the browser carries the redirects.
+    // Confidential: the oauth2-proxy gates in front of OpenProject on the home NAS hold the
+    // secret, one per host name: the public name, and the home-network-only one.
     isPublic: false,
     secretEnv: "OIDC_OPENPROJECT_CLIENT_SECRET",
-    redirectUris: ["https://openproject.home.romaine.life/oauth2/callback"],
+    redirectUris: [
+      "https://openproject.romaine.life/oauth2/callback",
+      "https://openproject.home.romaine.life/oauth2/callback",
+    ],
     skipConsent: true,
   },
   {
