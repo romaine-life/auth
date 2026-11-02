@@ -144,7 +144,7 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
     isPublic: false,
     secretEnv: "OIDC_OPENBAO_CLIENT_SECRET",
     redirectUris: [
-      "https://bao.home.romaine.life:8200/ui/vault/auth/oidc/oidc/callback",
+      "https://bao.home.romaine.life/ui/vault/auth/oidc/oidc/callback",
       // The `bao login -method=oidc` CLI loopback.
       "http://localhost:8250/oidc/callback",
     ],
