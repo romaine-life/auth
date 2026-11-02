@@ -220,3 +220,19 @@ export const managedOrigin = pgTable(
     ),
   }),
 );
+
+// Home devices (src/device-helpers.ts, ROMAINE-46, BAO-2): a machine a signed-in user
+// registered once, by the public half of a key the machine can't export. Revoking keeps
+// the row (revoked_at) for the audit trail; re-registering a name revokes its old row.
+// Created by drizzle/0004-device.sql.
+export const device = pgTable("device", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  publicKeyJwk: jsonb("public_key_jwk").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at"),
+  revokedAt: timestamp("revoked_at"),
+});

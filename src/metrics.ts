@@ -177,3 +177,16 @@ export type SshCertExchangeResultLabel =
 export function recordSshCertExchange(result: SshCertExchangeResultLabel): void {
   authSshCertExchangeTotal.labels(result).inc();
 }
+
+// Home device sign-in (/api/auth/device/*, src/device-helpers.ts): one count per enroll
+// and per token exchange, by outcome, so a device that keeps failing shows up.
+const authDeviceTotal = new Counter({
+  name: "auth_device_total",
+  help: "Home device enrolls and token exchanges, labeled by action and outcome.",
+  labelNames: ["action", "result"] as const,
+  registers: [registry],
+});
+
+export function recordDevice(action: "enroll" | "token" | "revoke", result: string): void {
+  authDeviceTotal.labels(action, result).inc();
+}
