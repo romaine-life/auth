@@ -174,7 +174,7 @@ test("the generated schema applies and the declared clients reconcile into it", 
   );
   assert.deepEqual(
     clients.rows.map((row) => row.client_id),
-    ["ambience", "argocd", "chess-tactics", "grafana", "openproject", "spt"],
+    ["ambience", "argocd", "chess-tactics", "grafana", "openbao", "openproject", "spt"],
   );
   const spt = await client.query<{ disabled: boolean }>(
     `SELECT disabled FROM "oauthClient" WHERE "clientId" = 'spt'`,
