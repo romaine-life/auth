@@ -4,13 +4,13 @@ import { cors } from "hono/cors";
 import { html, raw } from "hono/html";
 import { logger } from "hono/logger";
 import { setCookie, deleteCookie, getCookie } from "hono/cookie";
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, isNull } from "drizzle-orm";
 import { auth, resolveAllTrustedOrigins } from "./auth.js";
 import { OAUTH_CLIENT_IDS, reconcileOAuthClients, type AuthWithAdapter } from "./oauth-clients.js";
 import { adminLoginRedirectPath } from "./admin-redirect.js";
 import { landingSignInRedirect, signedOAuthQuery } from "./oidc-login-provider.js";
 import { db } from "./db/client.js";
-import { account, cliDeviceGrant, session, user } from "./db/schema.js";
+import { account, cliDeviceGrant, device, session, user } from "./db/schema.js";
 import {
   appendCallbackParams,
   buildRequesterGuidance,
@@ -55,7 +55,17 @@ import {
   SshCertExchangeError,
   sshCaPublicKey,
 } from "./ssh-cert-exchange.js";
-import { mintAuthJwt } from "./mint-jwt.js";
+import { mintAuthJwt, mintFederationJwt } from "./mint-jwt.js";
+import {
+  DEVICE_TOKEN_URL,
+  DeviceError,
+  checkEnrollToken,
+  createJtiStore,
+  deviceSubject,
+  parseEnrollRequest,
+  resolveAudience,
+  verifyDeviceAssertion,
+} from "./device-helpers.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
 import {
   recordAdminBotTokenMint,
@@ -65,6 +75,7 @@ import {
   recordExchange,
   recordFederationExchange,
   recordSshCertExchange,
+  recordDevice,
   registry,
 } from "./metrics.js";
 import {
@@ -76,7 +87,7 @@ import {
   parseTestSlotModelApprovalIntent,
   type TestSlotModelApprovalIntent,
 } from "./test-slot-model-approval.js";
-import { type JSONWebKeySet } from "jose";
+import { createLocalJWKSet, jwtVerify, type JSONWebKeySet, type JWK } from "jose";
 import { verifyAdminBearerJwt } from "./admin-bearer.js";
 
 // Cross-origin fetches from .romaine.life apps that hit /api/auth/* to
@@ -608,6 +619,125 @@ if (process.env.TEST_MODE !== "true") {
     }
   });
 
+  // ── Home devices (src/device-helpers.ts, ROMAINE-46, BAO-2) ────────────
+  // Registered here for the same first-match reason as the CLI routes above.
+  //
+  // POST /api/auth/device/enroll   Bearer: a user token from the last 10 minutes
+  //   body { name, public_key_jwk }  →  { device_id, name, token_url }
+  //   Re-registering a name revokes the old key.
+  // POST /api/auth/device/token
+  //   body { assertion, audience? }  →  { token, expires_at[, expires_in_hours] }
+  //   `assertion` is an ES256 JWT signed by the device's key: header kid = device_id,
+  //   iss = sub = device_id, aud = DEVICE_TOKEN_URL, exp - iat ≤ 300 s, a fresh jti.
+  //   Without `audience`, the same 24h user token /api/auth/cli/user-token mints (plus a
+  //   `device` claim); with one from DEVICE_AUDIENCES, a short federation token whose
+  //   sub is device:<user id>/<device name>.
+  // Errors are { error, reason }; reason is device_not_registered, device_revoked,
+  // invalid_assertion, assertion_replayed, audience_not_allowed, account_not_approved,
+  // invalid_request or internal.
+  app.post("/api/auth/device/enroll", async (c) => {
+    const header = c.req.header("Authorization");
+    if (!header || !header.startsWith("Bearer ")) {
+      return deviceErrorResponse(c, "enroll", new DeviceError("invalid_request", 401, "a signed-in user's bearer token is required"));
+    }
+    let claims: Record<string, unknown>;
+    try {
+      const jwks = (await auth.api.getJwks()) as JSONWebKeySet;
+      ({ payload: claims } = await jwtVerify(header.slice("Bearer ".length).trim(), createLocalJWKSet(jwks), {
+        issuer: ADMIN_BEARER_ISSUER,
+      }));
+    } catch (e) {
+      return deviceErrorResponse(c, "enroll", new DeviceError("invalid_request", 401, `token rejected: ${(e as Error).message}`));
+    }
+    const refusal = checkEnrollToken(claims, Math.floor(Date.now() / 1000));
+    if (refusal) return deviceErrorResponse(c, "enroll", new DeviceError("invalid_request", 403, refusal));
+    try {
+      const req = parseEnrollRequest(await readJsonObject(c));
+      const u = await approvedUser(String(claims.sub));
+      const id = `dev_${randomUrlToken(16)}`;
+      await db.transaction(async (tx) => {
+        await tx.update(device).set({ revokedAt: new Date() })
+          .where(and(eq(device.userId, u.id), eq(device.name, req.name), isNull(device.revokedAt)));
+        await tx.insert(device).values({ id, userId: u.id, name: req.name, publicKeyJwk: req.publicKeyJwk });
+      });
+      console.warn("[/api/auth/device/enroll] registered:", JSON.stringify({ email: u.email, device: req.name, id }));
+      recordDevice("enroll", "success");
+      return c.json({ device_id: id, name: req.name, token_url: DEVICE_TOKEN_URL });
+    } catch (e) {
+      return deviceErrorResponse(c, "enroll", e);
+    }
+  });
+
+  app.post("/api/auth/device/token", async (c) => {
+    try {
+      const body = await readJsonObject(c).catch((e: Error) => {
+        throw new DeviceError("invalid_request", 400, e.message);
+      });
+      const target = resolveAudience(body.audience);
+      const dev = await verifyDeviceAssertion(body.assertion, {
+        findDevice: async (id) => {
+          const rows = await db.select().from(device).where(eq(device.id, id)).limit(1);
+          const r = rows[0];
+          return r ? { id: r.id, userId: r.userId, name: r.name, publicKeyJwk: r.publicKeyJwk as JWK, revokedAt: r.revokedAt } : null;
+        },
+        claimJti: deviceAssertionJtis,
+        now: () => Math.floor(Date.now() / 1000),
+      });
+      // The role is read from the user row on every exchange, so a demotion takes effect
+      // at the device's next token.
+      const u = await approvedUser(dev.userId);
+      await db.update(device).set({ lastUsedAt: new Date() }).where(eq(device.id, dev.id));
+      if (target) {
+        const signed = await mintFederationJwt({
+          subject: deviceSubject(u.id, dev.name),
+          audience: target.audience,
+          ttlSeconds: target.ttlSeconds,
+        });
+        console.warn("[/api/auth/device/token] minted:", JSON.stringify({ email: u.email, device: dev.name, audience: target.audience, exp: signed.exp }));
+        recordDevice("token", `success_${target.audience}`);
+        return c.json({ token: signed.token, expires_at: signed.exp });
+      }
+      let apps: Record<string, unknown> = {};
+      try { apps = JSON.parse(u.apps ?? "{}"); } catch {}
+      const signed = await mintAuthJwt({
+        sub: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role as "admin" | "user",
+        apps,
+        device: dev.name,
+        ttlSeconds: USER_LOGIN_TOKEN_TTL_SECONDS,
+      });
+      console.warn("[/api/auth/device/token] minted:", JSON.stringify({ email: u.email, device: dev.name, role: u.role, exp: signed.exp }));
+      recordDevice("token", "success_user");
+      return c.json({ token: signed.token, expires_at: signed.exp, expires_in_hours: USER_LOGIN_TOKEN_TTL_SECONDS / 3600 });
+    } catch (e) {
+      return deviceErrorResponse(c, "token", e);
+    }
+  });
+
+}
+
+// Replay guard for device assertions (one replica; see createJtiStore).
+const deviceAssertionJtis = createJtiStore(() => Math.floor(Date.now() / 1000));
+
+async function approvedUser(id: string) {
+  const rows = await db.select().from(user).where(eq(user.id, id)).limit(1);
+  const u = rows[0];
+  if (!u || (u.role !== "admin" && u.role !== "user")) {
+    throw new DeviceError("account_not_approved", 403, "the account this device belongs to isn't approved");
+  }
+  return u;
+}
+
+function deviceErrorResponse(c: Context, action: "enroll" | "token", e: unknown) {
+  if (e instanceof DeviceError) {
+    recordDevice(action, e.reason);
+    return c.json({ error: e.message, reason: e.reason }, e.status);
+  }
+  console.error(`[/api/auth/device/${action}] failed:`, e);
+  recordDevice(action, "internal");
+  return c.json({ error: "internal error", reason: "internal" }, 500);
 }
 
 // TEST_MODE flips every handler into fixture-data mode. Used by helm-issue
@@ -2472,6 +2602,11 @@ app.get("/admin", async (c) => {
     return c.text("forbidden", 403);
   }
   const users = TEST_MODE ? TEST_USERS : await db.select().from(user).orderBy(desc(user.createdAt));
+  const devices = TEST_MODE
+    ? []
+    : await db.select({ id: device.id, name: device.name, email: user.email, createdAt: device.createdAt, lastUsedAt: device.lastUsedAt })
+        .from(device).innerJoin(user, eq(device.userId, user.id))
+        .where(isNull(device.revokedAt)).orderBy(device.name);
   const flash = c.req.query("ok") ?? (TEST_MODE ? "test mode · changes are discarded" : null);
   const testSlotModelIntent = parseTestSlotModelApprovalIntent(new URL(c.req.url).searchParams);
   return c.html(SHELL("Tyrell Console — Subjects", html`
@@ -2525,6 +2660,34 @@ app.get("/admin", async (c) => {
                     </div>
                     <div class="admin-actions">
                       <button class="admin-btn" type="submit">Update</button>
+                    </div>
+                  </form>
+                `)}
+              </div>`}
+          </div>
+        </section>
+
+        <section class="section col-span-2">
+          <div class="section-head">
+            <span class="title"><span class="sigil">//</span>Home Devices</span>
+            <span class="count">${devices.length} registered</span>
+          </div>
+          <div class="section-body">
+            ${devices.length === 0
+              ? html`<div class="empty">no devices registered</div>`
+              : html`<div class="admin-list">
+                ${devices.map((d) => html`
+                  <form class="admin-card" method="POST" action="/admin/devices/${d.id}/revoke">
+                    <div class="admin-head">
+                      <span class="email">${d.name} · ${d.email}</span>
+                      <span class="since">${d.createdAt.toISOString().slice(0, 10)}</span>
+                    </div>
+                    <div class="admin-grid">
+                      <label>Last used</label>
+                      <span>${d.lastUsedAt ? d.lastUsedAt.toISOString().replace("T", " ").slice(0, 16) + " UTC" : "never"}</span>
+                    </div>
+                    <div class="admin-actions">
+                      <button class="admin-btn" type="submit">Revoke</button>
                     </div>
                   </form>
                 `)}
@@ -2957,6 +3120,21 @@ app.post("/admin/users", async (c) => {
     return c.text("insert failed (email likely already exists)", 400);
   }
   return c.redirect(`/admin?ok=enrolled+${encodeURIComponent(email)}`);
+});
+
+// Revoking a home device: its next token exchange answers device_revoked. Tokens it
+// already holds run out on their own (24h at most).
+app.post("/admin/devices/:id/revoke", async (c) => {
+  const gate = await requireAdmin(c);
+  if ("status" in gate) return c.text("forbidden", gate.status === 302 ? 401 : 403);
+  if (TEST_MODE) return c.redirect("/admin?ok=test+mode+%C2%B7+update+discarded");
+  const id = c.req.param("id");
+  const rows = await db.update(device).set({ revokedAt: new Date() })
+    .where(and(eq(device.id, id), isNull(device.revokedAt))).returning({ name: device.name });
+  if (rows.length === 0) return c.text("no such device", 404);
+  console.warn("[/admin/devices/revoke] revoked:", JSON.stringify({ id, device: rows[0].name }));
+  recordDevice("revoke", "success");
+  return c.redirect(`/admin?ok=${encodeURIComponent(`revoked ${rows[0].name}`)}`);
 });
 
 app.post("/admin/users/:id", async (c) => {

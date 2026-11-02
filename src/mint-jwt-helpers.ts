@@ -67,6 +67,9 @@ export interface AuthJwtInput {
    *  tokens leave it unset. Surface for audit and for routing
    *  decisions in consumers (e.g., bot tokens skip refresh storms). */
   purpose?: string;
+  /** Optional `device` claim: the registered home device (src/device-helpers.ts) this
+   *  token was minted for, for audit, and so a device's token can't register another. */
+  device?: string;
   /** TTL override in seconds. Defaults to TTL_SECONDS[bot|service]
    *  or 15min if neither matches. Bounded — refuse anything past 7d
    *  to keep blast radius of a leaked token bounded. */
@@ -147,6 +150,9 @@ export function buildAuthJwtPayload(
   }
   if (input.purpose !== undefined) {
     payload.purpose = input.purpose;
+  }
+  if (input.device !== undefined) {
+    payload.device = input.device;
   }
   return payload;
 }
