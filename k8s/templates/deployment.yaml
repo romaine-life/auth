@@ -97,6 +97,12 @@ spec:
                 secretKeyRef:
                   name: auth-oauth
                   key: OIDC_OPENBAO_CLIENT_SECRET
+            # Forgejo relying party (self-hosted git on the NAS). Same degradation as above.
+            - name: OIDC_FORGEJO_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: OIDC_FORGEJO_CLIENT_SECRET
             # Glimmung-managed slot origin admin surface
             # (/api/admin/origins/*). Inbound auth: k8s SA tokens signed by
             # the cluster OIDC issuer below, with audience = this service.

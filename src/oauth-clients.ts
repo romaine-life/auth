@@ -151,6 +151,16 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
     skipConsent: true,
   },
   {
+    clientId: "forgejo",
+    name: "Forgejo",
+    // Confidential: Forgejo, self-hosted git on the NAS (nelsong6/forgejo), does the code
+    // exchange itself in its OpenID Connect sign-in source, named `romaine`.
+    isPublic: false,
+    secretEnv: "OIDC_FORGEJO_CLIENT_SECRET",
+    redirectUris: ["https://git.home.romaine.life/user/oauth2/romaine/callback"],
+    skipConsent: true,
+  },
+  {
     clientId: "spt",
     name: "spt",
     // Retired 2026-10-27: spt authorizes with its own relay key and signs in to nothing here.
