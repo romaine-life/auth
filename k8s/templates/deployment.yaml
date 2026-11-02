@@ -97,7 +97,7 @@ spec:
                 secretKeyRef:
                   name: auth-oauth
                   key: OIDC_OPENBAO_CLIENT_SECRET
-            # Forgejo relying party (self-hosted git on the NAS). Same degradation as above.
+            # Forgejo relying party (Forgejo on the NAS). Same degradation as above.
             - name: OIDC_FORGEJO_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

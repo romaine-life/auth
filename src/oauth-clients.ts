@@ -153,11 +153,11 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
   {
     clientId: "forgejo",
     name: "Forgejo",
-    // Confidential: Forgejo, self-hosted git on the NAS (nelsong6/forgejo), does the code
+    // Confidential: Forgejo on the NAS (nelsong6/forgejo, forgejo.romaine.life), does the code
     // exchange itself in its OpenID Connect sign-in source, named `romaine`.
     isPublic: false,
     secretEnv: "OIDC_FORGEJO_CLIENT_SECRET",
-    redirectUris: ["https://git.home.romaine.life/user/oauth2/romaine/callback"],
+    redirectUris: ["https://forgejo.romaine.life/user/oauth2/romaine/callback"],
     skipConsent: true,
   },
   {
