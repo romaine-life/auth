@@ -12,3 +12,9 @@ CREATE TABLE IF NOT EXISTS "device" (
 );
 -- One live registration per user and name; revoked rows stay for the audit trail.
 CREATE UNIQUE INDEX IF NOT EXISTS "device_user_name_live" ON "device" ("user_id", "name") WHERE "revoked_at" IS NULL;
+-- Applied by hand as postgres; the app connects as `auth`, which owns every other table.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'auth') THEN
+    ALTER TABLE "device" OWNER TO auth;
+  END IF;
+END $$;
