@@ -94,7 +94,7 @@ jobs:
           set -euo pipefail
           az acr login --name romainecr
           tag="${GITHUB_SHA:0:7}"
-          docker build -t "romainecr.azurecr.io/auth:$tag" .
+          docker build --network host -t "romainecr.azurecr.io/auth:$tag" .
           docker push "romainecr.azurecr.io/auth:$tag"
           echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
       - name: Propose the image pin
