@@ -60,7 +60,7 @@ jobs:
           tag=v0.1.0
           if [ -n "$last" ]; then tag="v0.1.$(( ${last##*.} + 1 ))"; fi
           body=$(jq -n --arg tag "$tag" --arg sha "$GITHUB_SHA" '{tag_name:$tag,target_commitish:$sha,name:$tag,body:("Validated source at "+$sha+". Source archives are provided by Forgejo.")}')
-          curl --fail-with-body -sS -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' -d "$body" "$api/releases"
+          printf 'Authorization: token %s\n' "$TOKEN" | curl --fail-with-body -sS -X POST --header @- -H 'Content-Type: application/json' -d "$body" "$api/releases"
 
   deploy:
     name: Publish image and checked pin PR
@@ -120,7 +120,6 @@ jobs:
           git push origin "HEAD:refs/heads/$branch"
           unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
           body=$(jq -n --arg head "$branch" --arg tag "$IMAGE_TAG" '{base:"main",head:$head,title:("chore: pin auth image "+$tag),body:"Validated image pin. https://openproject.romaine.life/wp/FORGEJO-3"}')
-          pr=$(curl --fail-with-body -sS -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' -d "$body" "$api/pulls")
+          pr=$(printf 'Authorization: token %s\n' "$TOKEN" | curl --fail-with-body -sS -X POST --header @- -H 'Content-Type: application/json' -d "$body" "$api/pulls")
           number=$(echo "$pr" | jq -r .number)
-          curl --fail-with-body -sS -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' -d '{"Do":"squash","merge_when_checks_succeed":true,"delete_branch_after_merge":true}' "$api/pulls/$number/merge"
-
+          printf 'Authorization: token %s\n' "$TOKEN" | curl --fail-with-body -sS -X POST --header @- -H 'Content-Type: application/json' -d '{"Do":"squash","merge_when_checks_succeed":true,"delete_branch_after_merge":true}' "$api/pulls/$number/merge"
