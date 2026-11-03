@@ -36,6 +36,18 @@ test("only provisioned machine subjects obtain OpenProject credentials", () => {
   assert.throws(() => openProjectClient("machine", "malformed"));
 });
 
+test("directory-account SSH logins retain their full name and exact grant", () => {
+  const user = "nromai01@stellarus.com";
+  const grants = { ssh: [{ target: "fl7vg4g5ww.local", user }] };
+  assert.equal(machineSshPrincipal("device:owner/nelsonpc", "fl7vg4g5ww.local", user, grants),
+    "device:owner/nelsonpc@fl7vg4g5ww.local/nromai01@stellarus.com");
+  assert.throws(() => machineSshPrincipal("machine", "fl7vg4g5ww.local", "nromai01", grants));
+  for (const bad of [user + "\n", "../" + user, user + '\"', user + ",root", "-root"]) {
+    assert.throws(() => machineSshPrincipal("machine", "fl7vg4g5ww.local", bad,
+      { ssh: [{ target: "fl7vg4g5ww.local", user: bad }] }));
+  }
+});
+
 test("captured assertions cannot authorize another SSH key, target, or audience", async () => {
   const now = 1_800_000_000;
   const { publicKey, privateKey } = await generateKeyPair("ES256");

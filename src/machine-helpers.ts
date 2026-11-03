@@ -30,7 +30,7 @@ export function machineRequestHash(body: Record<string, unknown>): string {
 }
 
 export function machineSshPrincipal(subject: string, target: string, user: string, apps: Record<string, unknown>): string {
-  if (!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(target) || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(user)) {
+  if (!/^[a-z0-9][a-z0-9.-]{0,252}$/.test(target) || !/^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,63}$/.test(user)) {
     throw new DeviceError("invalid_request", 400, "invalid SSH target or user");
   }
   const grants = apps.ssh;

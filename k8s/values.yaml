@@ -1,14 +1,10 @@
-# The image tag is bumped by .github/workflows/build-and-deploy.yaml on every
-# push to main (via `sed` on this file). Everything else is wired through
-# templates/.
+# CI proposes image changes through a checked PR; ArgoCD renders templates/.
 image:
   repository: romainecr.azurecr.io/auth
   # Quoted to force YAML string parsing. An all-numeric short SHA
   # (e.g. 5651694) would otherwise be read as an int, round-tripped
   # through Helm's float-backed value pipeline, and rendered as
-  # "5.651694e+06" — which is not a real ACR tag. The bump-and-push
-  # step in .github/workflows/build-and-deploy.yaml writes the
-  # quoted form for the same reason.
+  # "5.651694e+06" — which is not a real ACR tag. CI writes the quoted form.
   tag: "c439c38"
 
 externalSecret:

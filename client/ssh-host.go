@@ -43,27 +43,59 @@ func SSHConfig(original, root string) (string, error) {
 	return trustStart + "\nTrustedUserCAKeys \"" + path + "/romaine-ca.pub\"\nAuthorizedPrincipalsFile \"" + path + "/romaine-principals/%u\"\n" + trustEnd + "\n" + body, nil
 }
 
+func validateSSHPrincipals(user string, principals []string, hostname string) error {
+	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,63}$`).MatchString(user) || len(principals) == 0 {
+		return errors.New("an OS user and explicit machine principals are required")
+	}
+	hostname = strings.ToLower(hostname)
+	shortname := strings.Split(hostname, ".")[0]
+	for _, p := range principals {
+		if !regexp.MustCompile(`^device:[A-Za-z0-9_-]+/[a-z0-9-]+@[a-z0-9.-]+/[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$`).MatchString(p) || !strings.HasSuffix(p, "/"+user) {
+			return errors.New("invalid or mismatched SSH principal")
+		}
+		if !strings.Contains(p, "@"+hostname+"/") && !strings.Contains(p, "@"+shortname+"/") && !strings.Contains(p, "@"+shortname+".local/") {
+			return errors.New("SSH principal names another host")
+		}
+	}
+	return nil
+}
+
+func fetchSSHCA(ctx context.Context) (ssh.PublicKey, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", BaseURL+"/api/ssh/ca", nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := requestClient.Do(req)
+	if err != nil {
+		return nil, errors.New("cannot fetch auth's SSH CA public key")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		return nil, errors.New("auth's SSH CA is not configured")
+	}
+	ca, err := io.ReadAll(io.LimitReader(response.Body, 16384))
+	if err != nil {
+		return nil, err
+	}
+	key, _, _, rest, err := ssh.ParseAuthorizedKey(ca)
+	if err != nil || len(strings.TrimSpace(string(rest))) != 0 || key.Type() != ssh.KeyAlgoED25519 {
+		return nil, errors.New("invalid SSH CA public key")
+	}
+	return key, nil
+}
+
 // InstallSSHHostTrust requires host administrator privileges. Only explicit
 // target-qualified machine principals are installed for the given OS login.
 func InstallSSHHostTrust(ctx context.Context, user string, principals []string) error {
 	if err := requireHostAdmin(); err != nil {
 		return err
 	}
-	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`).MatchString(user) || len(principals) == 0 {
-		return errors.New("an OS user and explicit machine principals are required")
-	}
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
 	}
-	hostname = strings.ToLower(hostname)
-	for _, p := range principals {
-		if !regexp.MustCompile(`^device:[A-Za-z0-9_-]+/[a-z0-9-]+@[a-z0-9.-]+/[A-Za-z0-9._-]+$`).MatchString(p) || !strings.HasSuffix(p, "/"+user) {
-			return errors.New("invalid or mismatched SSH principal")
-		}
-		if !strings.Contains(p, "@"+hostname+"/") && !strings.Contains(p, "@"+strings.Split(hostname, ".")[0]+"/") {
-			return errors.New("SSH principal names another host")
-		}
+	if err := validateSSHPrincipals(user, principals, hostname); err != nil {
+		return err
 	}
 	root := "/etc/ssh"
 	sshd := "/usr/sbin/sshd"
@@ -81,22 +113,9 @@ func InstallSSHHostTrust(ctx context.Context, user string, principals []string) 
 	if err != nil {
 		return err
 	}
-	req, _ := http.NewRequestWithContext(ctx, "GET", BaseURL+"/api/ssh/ca", nil)
-	response, err := requestClient.Do(req)
-	if err != nil {
-		return errors.New("cannot fetch auth's SSH CA public key")
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return errors.New("auth's SSH CA is not configured")
-	}
-	ca, err := io.ReadAll(io.LimitReader(response.Body, 16384))
+	key, err := fetchSSHCA(ctx)
 	if err != nil {
 		return err
-	}
-	key, _, _, rest, err := ssh.ParseAuthorizedKey(ca)
-	if err != nil || len(strings.TrimSpace(string(rest))) != 0 || key.Type() != ssh.KeyAlgoED25519 {
-		return errors.New("invalid SSH CA public key")
 	}
 	if err = os.MkdirAll(filepath.Join(root, "romaine-principals"), 0755); err != nil {
 		return err

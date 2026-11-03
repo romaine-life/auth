@@ -34,6 +34,7 @@ func run(args []string) error {
 		flags := flag.NewFlagSet("ssh-host", flag.ContinueOnError)
 		user := flags.String("user", "", "local OS login")
 		file := flags.String("principals", "", "file listing explicit authorized machine principals")
+		userScope := flags.Bool("user-scope", false, "install trust in the current Unix account's authorized_keys")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -43,6 +44,9 @@ func run(args []string) error {
 		data, err := os.ReadFile(*file)
 		if err != nil {
 			return err
+		}
+		if *userScope {
+			return client.InstallSSHUserTrust(ctx, *user, strings.Fields(string(data)))
 		}
 		return client.InstallSSHHostTrust(ctx, *user, strings.Fields(string(data)))
 	case "grant":

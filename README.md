@@ -37,6 +37,10 @@ An administrator installs host trust with `ssh-host --user USER --principals FIL
 the principals are target-qualified machine identities, one per line, as returned
 by the SSH exchange. The command checks the SSH configuration before replacing it,
 keeps the prior configuration, and reloads the host's SSH listener.
+On macOS and Linux, `ssh-host --user USER --principals FILE --user-scope` instead
+installs the CA and exact principal list in the current account's `authorized_keys`.
+This needs no administrator access or listener restart and preserves existing keys.
+OS logins containing `@`, such as a macOS directory account, are accepted literally.
 
 `POST /api/auth/device/token` requires an explicit audience: `machine` for first-party credentials, or `audience=ssh` with `public_key`, `target` and
 `user`, returning a certificate lasting at most ten minutes. `audience=openproject`
@@ -464,11 +468,11 @@ npm run dev
 
 ## Deployment
 
-ArgoCD syncs everything in [k8s/](k8s/) (Application manifest lives in
+ArgoCD renders the Helm chart in [k8s/](k8s/) (Application manifest lives in
 `infra-bootstrap/k8s/apps/auth.yaml`). The pipeline is:
 
-1. Push to `main` → [build-and-deploy](.github/workflows/build-and-deploy.yml) builds the image, pushes to `romainecr`, bumps the tag in `k8s/kustomization.yaml`, commits back
-2. ArgoCD picks up the kustomization change, rolls the Deployment
+1. After server inputs change on `main`, [CI](.forgejo/workflows/ci.yaml) validates, builds and pushes the image to `romainecr`, then opens a checked PR updating `k8s/values.yaml`.
+2. After that image pin merges, ArgoCD rolls the Deployment. Client-only changes release the native clients without rebuilding the server image.
 3. CNPG manages the Postgres cluster lifecycle alongside
 
 Cluster credentials come from CNPG's auto-generated `auth-db-app` Secret;
