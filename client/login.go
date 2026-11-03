@@ -11,9 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"time"
 )
 
@@ -62,16 +60,7 @@ func HumanLogin(ctx context.Context) (Credentials, error) {
 	defer server.Close()
 	query := url.Values{"redirect_uri": {redirect}, "state": {state}, "code_challenge": {challenge}, "code_challenge_method": {"S256"}}
 	target := BaseURL + "/api/auth/cli/user-login?" + query.Encode()
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		cmd = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", target)
-	case "darwin":
-		cmd = exec.Command("/usr/bin/open", target)
-	default:
-		cmd = exec.Command("xdg-open", target)
-	}
-	if err = cmd.Run(); err != nil {
+	if err = openBrowser(target); err != nil {
 		return result, errors.New("cannot open the personal sign-in browser")
 	}
 	var code string
