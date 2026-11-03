@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/romaine-life/auth/client"
 )
@@ -24,7 +26,8 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject|openbao], or ssh --user USER HOST [COMMAND...]")
 	}
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	dir := client.ConfigDir()
 	switch args[0] {
 	case "ssh-host":
