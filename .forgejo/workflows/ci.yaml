@@ -66,7 +66,7 @@ jobs:
     name: Publish image and checked pin PR
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: [ubuntu-latest, upstairspc-linux]
     enable-openid-connect: true
     steps:
       - uses: actions/checkout@v4
@@ -95,6 +95,7 @@ jobs:
           az acr login --name romainecr
           tag="${GITHUB_SHA:0:7}"
           docker build --network host -t "romainecr.azurecr.io/auth:$tag" .
+          docker run --rm --network none --entrypoint sh "romainecr.azurecr.io/auth:$tag" -c 'test "$(id -u)" = 1001 && test "$(stat -c %u /app)" = 1001 && test -z "$(find /app ! -user nodejs -print -quit)"'
           docker push "romainecr.azurecr.io/auth:$tag"
           echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
       - name: Propose the image pin
