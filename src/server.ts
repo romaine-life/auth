@@ -956,7 +956,7 @@ const ROMAINE_APPS = [
   { host: "investing.romaine.life",    name: "investing" },
   { host: "diagrams.romaine.life",     name: "diagrams" },
   { host: "tank.romaine.life",         name: "tank-operator" },
-  { host: "fzt-frontend.romaine.life", name: "fzt-frontend" },
+  { host: "fzt-frontend.home.romaine.life", name: "fzt-frontend" },
   { host: "glimmung.romaine.life",     name: "glimmung" },
 ];
 
