@@ -70,7 +70,7 @@ const PROD_TRUSTED_ORIGINS = [
   "https://investing.romaine.life",
   "https://diagrams.romaine.life",
   "https://tank.romaine.life",
-  "https://fzt-frontend.romaine.life",
+  "https://fzt-frontend.home.romaine.life",
   "https://glimmung.romaine.life",
   // Per-project slot wildcards under `.dev.romaine.life` do not belong
   // in this list — they are reconciled into the managed_origin table
