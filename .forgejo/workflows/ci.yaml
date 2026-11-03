@@ -1,0 +1,126 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test and check contracts
+        run: |
+          set -euo pipefail
+          command -v ssh-keygen
+          npm ci
+          npm run typecheck
+          npm test
+          npm run check:static-slot-origins
+          npm run check:signjwt-callsites
+      - uses: https://github.com/opentofu/setup-opentofu@v2
+        with:
+          tofu_version: '1.11.0'
+          tofu_wrapper: false
+      - name: Repository lint
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, subprocess, re
+          for file in subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0'):
+              if not file: continue
+              data = pathlib.Path(file).read_bytes()
+              if data and b'\0' not in data and not data.endswith(b'\n'):
+                  raise SystemExit(f'Missing trailing newline: {file}')
+              if file.endswith('.yml'): raise SystemExit(f'Use .yaml: {file}')
+              if '_' in file and not re.search(r'PULL_REQUEST_TEMPLATE|ISSUE_TEMPLATE|\.(md|js|py|webp|png|jpe?g|gif|svg|ico|txt)$', file):
+                  raise SystemExit(f'Underscore in filename: {file}')
+          PY
+          tofu fmt -recursive -check
+      - name: Publish source release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+          git fetch --tags
+          last=$(git tag -l 'v0.1.*' --sort=-v:refname | head -1)
+          tag=v0.1.0
+          if [ -n "$last" ]; then tag="v0.1.$(( ${last##*.} + 1 ))"; fi
+          body=$(jq -n --arg tag "$tag" --arg sha "$GITHUB_SHA" '{tag_name:$tag,target_commitish:$sha,name:$tag,body:("Validated source at "+$sha+". Source archives are provided by Forgejo.")}')
+          curl --fail-with-body -sS -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' -d "$body" "$api/releases"
+
+  deploy:
+    name: Publish image and checked pin PR
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [ubuntu-latest, upstairspc-linux]
+    enable-openid-connect: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check image inputs
+        id: inputs
+        run: |
+          if git diff HEAD^ HEAD --name-only | grep -qE '^(src/|package(-lock)?\.json$|tsconfig\.json$|drizzle\.config\.ts$|Dockerfile$|\.dockerignore$|\.forgejo/workflows/ci\.yaml$)'; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Azure CLI
+        if: steps.inputs.outputs.changed == 'true'
+        run: curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
+      - uses: https://github.com/azure/login@v3
+        if: steps.inputs.outputs.changed == 'true'
+        with:
+          client-id: ${{ vars.ARM_CLIENT_ID }}
+          tenant-id: ${{ vars.ARM_TENANT_ID }}
+          subscription-id: ${{ vars.ARM_SUBSCRIPTION_ID }}
+      - name: Build and publish image
+        if: steps.inputs.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          az acr login --name romainecr
+          tag="${GITHUB_SHA:0:7}"
+          docker build --network host -t "romainecr.azurecr.io/auth:$tag" .
+          docker run --rm --network none --entrypoint sh "romainecr.azurecr.io/auth:$tag" -c 'test "$(id -u)" = 1001 && test "$(stat -c %u /app)" = 1001 && test -z "$(find /app ! -user nodejs -print -quit)"'
+          docker push "romainecr.azurecr.io/auth:$tag"
+          echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+      - name: Propose the image pin
+        if: steps.inputs.outputs.changed == 'true'
+        env:
+          TOKEN: ${{ secrets.PIPELINE_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$TOKEN"
+          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+          branch="FORGEJO-3-image-$GITHUB_SHA"
+          git checkout -b "$branch"
+          sed -i -E "s|^(  tag: ).*$|\1\"$IMAGE_TAG\"|" k8s/values.yaml
+          git config user.name forgejo-actions
+          git config user.email forgejo-actions@noreply.romaine.life
+          git add k8s/values.yaml
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: pin auth image $IMAGE_TAG"
+          # Keep the credential out of git's process arguments.
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader
+          export GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          git push origin "HEAD:refs/heads/$branch"
+          unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+          body=$(jq -n --arg head "$branch" --arg tag "$IMAGE_TAG" '{base:"main",head:$head,title:("chore: pin auth image "+$tag),body:"Validated image pin. https://openproject.romaine.life/wp/FORGEJO-3"}')
+          pr=$(curl --fail-with-body -sS -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' -d "$body" "$api/pulls")
+          number=$(echo "$pr" | jq -r .number)
+          curl --fail-with-body -sS -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' -d '{"Do":"squash","merge_when_checks_succeed":true,"delete_branch_after_merge":true}' "$api/pulls/$number/merge"
+

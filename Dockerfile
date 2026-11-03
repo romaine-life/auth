@@ -19,13 +19,13 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-COPY --from=builder /app/node_modules node_modules
-COPY --from=builder /app/dist dist
-COPY --from=builder /app/package.json package.json
+COPY --from=builder --chown=1001:1001 /app/node_modules node_modules
+COPY --from=builder --chown=1001:1001 /app/dist dist
+COPY --from=builder --chown=1001:1001 /app/package.json package.json
 
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001 && \
-    chown -R nodejs:nodejs /app
+    chown nodejs:nodejs /app
 USER nodejs
 
 EXPOSE 3000
