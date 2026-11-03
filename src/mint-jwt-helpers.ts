@@ -59,8 +59,8 @@ export interface AuthJwtInput {
    *  tokens; service tokens pass `{}` because per-app prefs are a
    *  human concept. */
   apps: Record<string, unknown>;
-  /** Required when role=service: the human whose session this token
-   *  is acting on behalf of. Verifier refuses service tokens missing
+  /** Required when role=service: the account responsible for this token, which
+   *  may itself be a machine. Verifier refuses service tokens missing
    *  it. Forbidden for non-service tokens — they don't have an actor. */
   actorEmail?: string;
   /** Optional `purpose` claim. Bot tokens carry `"bot"`; service

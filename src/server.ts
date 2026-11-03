@@ -54,7 +54,10 @@ import {
   exchangeSshCert,
   SshCertExchangeError,
   sshCaPublicKey,
+  getSshCertSigner,
 } from "./ssh-cert-exchange.js";
+import { parseUserEd25519PublicKey, SSH_CERT_SKEW_SECONDS } from "./ssh-cert.js";
+import { machineIdentity, machineTokenInput, machineRequestHash, machineSshPrincipal, openProjectClient, exchangeOpenProjectToken } from "./machine-helpers.js";
 import { mintAuthJwt, mintFederationJwt } from "./mint-jwt.js";
 import {
   DEVICE_TOKEN_URL,
@@ -620,6 +623,33 @@ if (process.env.TEST_MODE !== "true") {
   });
 
   // ── Home devices (src/device-helpers.ts, ROMAINE-46, BAO-2) ────────────
+  app.post("/api/admin/machines/grants", async (c) => {
+    let claims: Record<string, unknown>;
+    try {
+      const bearer = c.req.header("Authorization") ?? "";
+      if (!bearer.startsWith("Bearer ")) return c.json({ error: "recent personal administrator sign-in required" }, 401);
+      const jwks = await auth.api.getJwks() as JSONWebKeySet;
+      ({ payload: claims } = await jwtVerify(bearer.slice(7), createLocalJWKSet(jwks), { issuer: ADMIN_BEARER_ISSUER }));
+      if (claims.role !== "admin" || checkEnrollToken(claims, Math.floor(Date.now() / 1000))) return c.json({ error: "recent personal administrator sign-in required" }, 403);
+      const sponsor = await approvedUser(String(claims.sub));
+      if (sponsor.role !== "admin") return c.json({ error: "administrator required" }, 403);
+      const body = await readJsonObject(c);
+      const subject = String(body.subject ?? "");
+      const [machine] = await db.select().from(user).where(eq(user.id, subject)).limit(1);
+      if (!machine || !machine.email.endsWith("@service.machine.romaine.life")) return c.json({ error: "unknown machine account" }, 404);
+      const apps = body.apps;
+      if (!apps || typeof apps !== "object" || Array.isArray(apps)) return c.json({ error: "apps must be an object" }, 400);
+      const ssh = (apps as Record<string, unknown>).ssh;
+      if (ssh !== undefined && (!Array.isArray(ssh) || ssh.some((g) => !g || typeof g.target !== "string" || typeof g.user !== "string"))) return c.json({ error: "invalid SSH grants" }, 400);
+      for (const grant of (ssh ?? []) as { target: string; user: string }[]) machineSshPrincipal(subject, grant.target, grant.user, apps as Record<string, unknown>);
+      await db.update(user).set({ apps: JSON.stringify(apps), updatedAt: new Date() }).where(eq(user.id, subject));
+      console.warn("[machine-grants] updated:", JSON.stringify({ subject, administrator: sponsor.email }));
+      return c.json({ subject, apps });
+    } catch (e) {
+      if (e instanceof DeviceError) return deviceErrorResponse(c, "enroll", e);
+      return c.json({ error: "machine grants request refused" }, 400);
+    }
+  });
   // Registered here for the same first-match reason as the CLI routes above.
   //
   // POST /api/auth/device/enroll   Bearer: a user token from the last 10 minutes
@@ -629,9 +659,7 @@ if (process.env.TEST_MODE !== "true") {
   //   body { assertion, audience? }  →  { token, expires_at[, expires_in_hours] }
   //   `assertion` is an ES256 JWT signed by the device's key: header kid = device_id,
   //   iss = sub = device_id, aud = DEVICE_TOKEN_URL, exp - iat ≤ 300 s, a fresh jti.
-  //   Without `audience`, the same 24h user token /api/auth/cli/user-token mints (plus a
-  //   `device` claim); with one from DEVICE_AUDIENCES, a short federation token whose
-  //   sub is device:<user id>/<device name>.
+  //   Without audience, a 15-minute machine token; third-party/SSH exchanges are distinct.
   // Errors are { error, reason }; reason is device_not_registered, device_revoked,
   // invalid_assertion, assertion_replayed, audience_not_allowed, account_not_approved,
   // invalid_request or internal.
@@ -655,14 +683,17 @@ if (process.env.TEST_MODE !== "true") {
       const req = parseEnrollRequest(await readJsonObject(c));
       const u = await approvedUser(String(claims.sub));
       const id = `dev_${randomUrlToken(16)}`;
+      const identity = machineIdentity(u.id, req.name);
       await db.transaction(async (tx) => {
         await tx.update(device).set({ revokedAt: new Date() })
           .where(and(eq(device.userId, u.id), eq(device.name, req.name), isNull(device.revokedAt)));
         await tx.insert(device).values({ id, userId: u.id, name: req.name, publicKeyJwk: req.publicKeyJwk });
+        await tx.insert(user).values({ ...identity, role: "service", emailVerified: true,
+          apps: JSON.stringify({ fzt: { owner_sub: u.id }, ssh: [] }) }).onConflictDoNothing();
       });
       console.warn("[/api/auth/device/enroll] registered:", JSON.stringify({ email: u.email, device: req.name, id }));
       recordDevice("enroll", "success");
-      return c.json({ device_id: id, name: req.name, token_url: DEVICE_TOKEN_URL });
+      return c.json({ device_id: id, name: req.name, token_url: DEVICE_TOKEN_URL, machine_subject: identity.id });
     } catch (e) {
       return deviceErrorResponse(c, "enroll", e);
     }
@@ -674,6 +705,7 @@ if (process.env.TEST_MODE !== "true") {
         throw new DeviceError("invalid_request", 400, e.message);
       });
       const target = resolveAudience(body.audience);
+      if (!target) throw new DeviceError("invalid_request", 400, "update the machine client: an explicit machine audience is required");
       const dev = await verifyDeviceAssertion(body.assertion, {
         findDevice: async (id) => {
           const rows = await db.select().from(device).where(eq(device.id, id)).limit(1);
@@ -682,12 +714,40 @@ if (process.env.TEST_MODE !== "true") {
         },
         claimJti: deviceAssertionJtis,
         now: () => Math.floor(Date.now() / 1000),
+        requestHash: target?.audience === "ssh" || target?.audience === "openproject" ? machineRequestHash(body) : undefined,
       });
       // The role is read from the user row on every exchange, so a demotion takes effect
       // at the device's next token.
       const u = await approvedUser(dev.userId);
+      const identity = machineIdentity(u.id, dev.name);
+      // Existing registrations keep their key and OpenBao subject, but gain a distinct
+      // principal. Never reset its grants or re-enable a disabled principal on exchange.
+      await db.insert(user).values({ ...identity, role: "service", emailVerified: true,
+        apps: JSON.stringify({ fzt: { owner_sub: u.id }, ssh: [] }) }).onConflictDoNothing();
+      const [machine] = await db.select().from(user).where(eq(user.id, identity.id)).limit(1);
+      if (!machine || machine.role !== "service") throw new DeviceError("account_not_approved", 403, "the machine account is disabled");
+      let apps: Record<string, unknown>;
+      try { apps = JSON.parse(machine.apps); } catch { throw new Error("invalid machine grants"); }
       await db.update(device).set({ lastUsedAt: new Date() }).where(eq(device.id, dev.id));
-      if (target) {
+      if (target?.audience === "ssh") {
+        const principal = machineSshPrincipal(identity.id, String(body.target ?? ""), String(body.user ?? ""), apps);
+        let publicKey;
+        try { publicKey = parseUserEd25519PublicKey(String(body.public_key ?? "")); }
+        catch { throw new DeviceError("invalid_request", 400, "an ed25519 SSH public key is required"); }
+        const now = Math.floor(Date.now() / 1000);
+        const signed = getSshCertSigner().signUserCert({ userPublicKey: publicKey, keyId: `${identity.id}/${dev.id}`,
+          principals: [principal], extensions: ["permit-pty"], validAfter: now - SSH_CERT_SKEW_SECONDS, validBefore: now + target.ttlSeconds });
+        console.warn("[/api/auth/device/token] SSH certificate:", JSON.stringify({ subject: identity.id, principal, expires_at: signed.validBefore }));
+        recordDevice("token", "success_ssh");
+        return c.json({ certificate: signed.authorizedKeyLine, expires_at: signed.validBefore, subject: identity.id, principal });
+      }
+      if (target?.audience === "openproject") {
+        const signed = await exchangeOpenProjectToken(openProjectClient(identity.id, process.env.OPENPROJECT_MACHINE_CLIENTS));
+        console.warn("[/api/auth/device/token] OpenProject token:", JSON.stringify({ subject: identity.id, expires_at: signed.expires_at }));
+        recordDevice("token", "success_openproject");
+        return c.json({ ...signed, subject: identity.id });
+      }
+      if (target?.audience === "openbao") {
         const signed = await mintFederationJwt({
           subject: deviceSubject(u.id, dev.name),
           audience: target.audience,
@@ -697,20 +757,10 @@ if (process.env.TEST_MODE !== "true") {
         recordDevice("token", `success_${target.audience}`);
         return c.json({ token: signed.token, expires_at: signed.exp });
       }
-      let apps: Record<string, unknown> = {};
-      try { apps = JSON.parse(u.apps ?? "{}"); } catch {}
-      const signed = await mintAuthJwt({
-        sub: u.id,
-        email: u.email,
-        name: u.name,
-        role: u.role as "admin" | "user",
-        apps,
-        device: dev.name,
-        ttlSeconds: USER_LOGIN_TOKEN_TTL_SECONDS,
-      });
-      console.warn("[/api/auth/device/token] minted:", JSON.stringify({ email: u.email, device: dev.name, role: u.role, exp: signed.exp }));
-      recordDevice("token", "success_user");
-      return c.json({ token: signed.token, expires_at: signed.exp, expires_in_hours: USER_LOGIN_TOKEN_TTL_SECONDS / 3600 });
+      const signed = await mintAuthJwt(machineTokenInput(u.id, dev.name, apps));
+      console.warn("[/api/auth/device/token] minted:", JSON.stringify({ subject: identity.id, device: dev.name, role: "service", exp: signed.exp }));
+      recordDevice("token", "success_machine");
+      return c.json({ token: signed.token, expires_at: signed.exp, subject: identity.id });
     } catch (e) {
       return deviceErrorResponse(c, "token", e);
     }
@@ -2652,8 +2702,9 @@ app.get("/admin", async (c) => {
                       <input name="name" value="${u.name}" />
                       <label>Role</label>
                       <select name="role">
-                        <option value="user" ${u.role === "user" ? "selected" : ""}>citizen</option>
-                        <option value="admin" ${u.role === "admin" ? "selected" : ""}>blade runner</option>
+                        ${isReservedServiceEmail(u.email) ? html`<option value="service" ${u.role === "service" ? "selected" : ""}>machine / service</option><option value="pending" ${u.role === "pending" ? "selected" : ""}>disabled</option>` : html`
+                          <option value="user" ${u.role === "user" ? "selected" : ""}>citizen</option>
+                          <option value="admin" ${u.role === "admin" ? "selected" : ""}>blade runner</option>`}
                       </select>
                       <label>Apps</label>
                       <textarea name="apps" rows="2">${u.apps}</textarea>
@@ -3147,7 +3198,11 @@ app.post("/admin/users/:id", async (c) => {
   const role = String(form.get("role") ?? "user");
   const apps = String(form.get("apps") ?? "{}");
   if (!name) return c.text("name required", 400);
-  if (role !== "admin" && role !== "user") return c.text("invalid role", 400);
+  const [existing] = await db.select().from(user).where(eq(user.id, id)).limit(1);
+  if (!existing) return c.text("no such account", 404);
+  if (isReservedServiceEmail(existing.email)) {
+    if (role !== "service" && role !== "pending") return c.text("machine/service accounts cannot become human accounts", 400);
+  } else if (role !== "admin" && role !== "user") return c.text("invalid role", 400);
   try {
     JSON.parse(apps);
   } catch {

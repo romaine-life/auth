@@ -121,7 +121,7 @@ function getPrincipalPattern(): RegExp {
  *  CA must never silently bypass cert issuance, and it must never crash
  *  the rest of the auth service either (federation, sign-in, etc. stay
  *  up). */
-function getSigner(): SshCertSigner {
+export function getSshCertSigner(): SshCertSigner {
   if (cachedSigner) return cachedSigner;
   if (cachedSignerError) throw cachedSignerError;
   try {
@@ -137,7 +137,7 @@ function getSigner(): SshCertSigner {
  *  404 and lets a readiness check assert issuance is wired. */
 export function isSshCaConfigured(): boolean {
   try {
-    getSigner();
+    getSshCertSigner();
     return true;
   } catch {
     return false;
@@ -150,7 +150,7 @@ export function isSshCaConfigured(): boolean {
  *  TrustedUserCAKeys). */
 export function sshCaPublicKey(): string | null {
   try {
-    return getSigner().publicKeyAuthorizedKey();
+    return getSshCertSigner().publicKeyAuthorizedKey();
   } catch {
     return null;
   }
@@ -216,7 +216,7 @@ export async function exchangeSshCert(
   //    anything else in the sign path is a 500.
   let signer: SshCertSigner;
   try {
-    signer = getSigner();
+    signer = getSshCertSigner();
   } catch (e) {
     if (e instanceof SshCaUnconfiguredError) {
       throw new SshCertExchangeError(e.message, 503, "error_ca_unconfigured");

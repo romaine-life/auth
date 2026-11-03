@@ -3,6 +3,8 @@ import { jwt } from "better-auth/plugins";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "./db/client.js";
+import { eq } from "drizzle-orm";
+import { user as userTable } from "./db/schema.js";
 import { getManagedOrigins } from "./managed-origins.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
 import { OAUTH_CLIENT_IDS, hashClientSecret } from "./oauth-clients.js";
@@ -143,6 +145,15 @@ export const auth = betterAuth({
   },
 
   databaseHooks: {
+    session: {
+      create: {
+        before: async (sessionData) => {
+          const [principal] = await db.select().from(userTable).where(eq(userTable.id, sessionData.userId)).limit(1);
+          if (principal && isReservedServiceEmail(principal.email)) throw new Error("machine/service accounts cannot start human sessions");
+          return { data: sessionData };
+        },
+      },
+    },
     user: {
       create: {
         // Refuse any user-create whose email is in a synthetic service

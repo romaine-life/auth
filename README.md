@@ -6,6 +6,54 @@ JWKS endpoint. Replaces the per-app `microsoft-routes.js` + shared
 `api-jwt-signing-secret` pattern that previously lived in kill-me, plant-agent,
 investing, house-hunt, and fzt-frontend.
 
+## Machine authentication
+
+Machine authentication uses a distinct `role=service, purpose=machine` account per
+registered machine, with a 15-minute first-party token. The human who enrolls its
+public key is the sponsor, not the identity the machine later presents. Machine
+accounts cannot become browser sessions or human accounts; their grants live on
+their own account's `apps` object. `apps.fzt.owner_sub` grants writes to that owner's
+menu and bookmark trees, and `apps.ssh` is an explicit array of `{target,user}`.
+
+The Go `client` package and CI-released `romaine-auth` executable share the Windows
+TPM key, macOS Keychain or Linux KWallet/Secret Service credential. There is no
+plaintext key fallback. `user-login` stores personal credentials in `user-token.json`;
+machine refresh uses `machine-token.json`. Neither reads the old mixed
+`auth-token.json`, and machine renewal never updates a human credential.
+
+```
+romaine-auth enroll nelson-laptop
+romaine-auth whoami
+romaine-auth user-login
+romaine-auth whoami --human
+romaine-auth ssh --user nelson nelsonpc hostname
+romaine-auth op get /api/v3/users/me
+```
+
+Enrollment uses a recent browser sign-in only to authorize the public-key registration.
+Re-enrollment changes the key registration while keeping the machine account stable.
+`grant MACHINE-SUBJECT APPS-JSON-FILE` needs a recent personal administrator sign-in.
+An administrator installs host trust with `ssh-host --user USER --principals FILE`;
+the principals are target-qualified machine identities, one per line, as returned
+by the SSH exchange. The command checks the SSH configuration before replacing it,
+keeps the prior configuration, and reloads the host's SSH listener.
+
+`POST /api/auth/device/token` requires an explicit audience: `machine` for first-party credentials, or `audience=ssh` with `public_key`, `target` and
+`user`, returning a certificate lasting at most ten minutes. `audience=openproject`
+exchanges the machine proof for an OpenProject-native OAuth token lasting at most
+two hours. Both require `request_hash`, the hexadecimal SHA-256 of sorted-key JSON
+containing the request fields other than `assertion`. OpenProject confidential-client
+credentials are mapped by machine subject in `ng6-auth/openproject-machine-clients`,
+synced to `OPENPROJECT_MACHINE_CLIENTS`; the machine receives only the expiring token.
+Provision these with at-home-tools' `op-machine`, which creates a distinct OpenProject
+administrator account per machine (Nelson's current permission choice).
+
+Revocation stops new exchanges. Already-issued credentials expire naturally: fifteen
+minutes for first-party machine tokens, ten for SSH certificates, two hours for
+OpenProject, and five minutes for OpenBao. Old clients omitting the audience are refused so they cannot select machine subjects as personal trees. Legacy device-as-human tokens must be
+discarded by clients; fzt rejects them. Other existing JWT verifiers may accept such
+tokens until their original 24-hour expiry. Existing OpenBao subjects are unchanged.
+
 ## Stack
 
 - **Hono** on Node 20 (Web Standards request/response, portable to Bun / edge if we want it)

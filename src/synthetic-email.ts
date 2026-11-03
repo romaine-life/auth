@@ -33,6 +33,7 @@
  * still per-consumer; this list is just the cross-cutting guard.
  */
 export const RESERVED_SERVICE_EMAIL_DOMAINS: readonly string[] = [
+  "service.machine.romaine.life",
   "service.tank.romaine.life",
   "service.mcp-k8s.romaine.life",
   "service.mcp-argocd.romaine.life",

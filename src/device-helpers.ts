@@ -1,21 +1,7 @@
-// Home devices: a machine that signs in from its Windows login, with no browser
-// (ROMAINE-46, BAO-2).
-//
-// A signed-in user registers a device once: its name and the public half of a key the
-// machine holds and can't export (a TPM key under that user's Windows account, or a
-// root-only key file on the NAS). After that the machine trades a short assertion it
-// signs with that key for a token:
-//
-//   - with no audience, the same 24h user token /api/auth/cli/user-token mints, for
-//     first-party consumers (the at menu, fzt-frontend);
-//   - with an audience from DEVICE_AUDIENCES, a short federation-shaped token for that
-//     one third party (OpenBao). It has no role or email, so no first-party consumer
-//     accepts it, and its subject names the user and the device, so the third party can
-//     bind a policy to exactly one machine.
-//
-// This module is pure: the route handlers in server.ts supply the device lookup, the
-// clock and the replay store.
-
+// A human enrolls a machine credential once. Device assertions mint credentials
+// for that machine's own account; they never renew a human sign-in. OpenBao keeps
+// its established federation subject, while SSH and OpenProject exchanges require
+// the assertion to bind the exact request. Route handlers supply the lookup and clock.
 import { decodeProtectedHeader, importJWK, jwtVerify, type JWK } from "jose";
 
 /** Where a device posts its assertion; the assertion's `aud` must be exactly this. */
@@ -34,9 +20,12 @@ export const ENROLL_MAX_TOKEN_AGE_SECONDS = 10 * 60;
 /** Third parties a device may ask a token for, and that token's lifetime. Declared in
  *  code, like the OAuth clients, so which services trust a device is reviewed. */
 export const DEVICE_AUDIENCES: Record<string, { ttlSeconds: number }> = {
+  machine: { ttlSeconds: 15 * 60 },
   // OpenBao, the home secret store (nelsong6/openbao): its jwt auth method binds each
   // role to one device's subject.
   openbao: { ttlSeconds: 5 * 60 },
+  openproject: { ttlSeconds: 2 * 60 * 60 },
+  ssh: { ttlSeconds: 10 * 60 },
 };
 
 /** Device names: what the machine is called at home (nelsonpc, treadmill, nas). */
@@ -49,7 +38,8 @@ export type DeviceErrorReason =
   | "invalid_assertion"
   | "assertion_replayed"
   | "audience_not_allowed"
-  | "account_not_approved";
+  | "account_not_approved"
+  | "access_denied";
 
 /** A refusal the client can act on: `reason` is machine-readable and distinct for "not
  *  registered" and "revoked", so the menu can say which. */
@@ -120,6 +110,7 @@ export interface VerifyDeps {
   /** Records a jti until it expires; returns false if it was already recorded. */
   claimJti(jti: string, expiresAt: number): boolean;
   now(): number;
+  requestHash?: string;
 }
 
 /** Verify a device's assertion: an ES256 JWT whose header `kid` is the device id, with
@@ -153,15 +144,18 @@ export async function verifyDeviceAssertion(assertion: unknown, deps: VerifyDeps
       subject: device.id,
       clockTolerance: ASSERTION_CLOCK_TOLERANCE_SECONDS,
       currentDate: new Date(now * 1000),
-      requiredClaims: ["iat", "exp", "jti"],
+      requiredClaims: ["iat", "exp", "jti", ...(deps.requestHash ? ["request_hash"] : [])],
     }));
   } catch (e) {
     throw new DeviceError("invalid_assertion", 401, `assertion rejected: ${(e as Error).message}`);
   }
   const iat = payload.iat as number;
   const exp = payload.exp as number;
-  if (exp - iat > ASSERTION_MAX_LIFETIME_SECONDS) {
+  if (!Number.isFinite(iat) || !Number.isFinite(exp) || exp <= iat || iat > now + ASSERTION_CLOCK_TOLERANCE_SECONDS || exp - iat > ASSERTION_MAX_LIFETIME_SECONDS) {
     throw new DeviceError("invalid_assertion", 401, `assertion lifetime exceeds ${ASSERTION_MAX_LIFETIME_SECONDS}s`);
+  }
+  if (deps.requestHash && payload.request_hash !== deps.requestHash) {
+    throw new DeviceError("invalid_assertion", 401, "assertion does not authorize this request");
   }
   if (typeof payload.jti !== "string" || !payload.jti || !deps.claimJti(payload.jti, exp)) {
     throw new DeviceError("assertion_replayed", 401, "assertion was already used");
@@ -169,7 +163,7 @@ export async function verifyDeviceAssertion(assertion: unknown, deps: VerifyDeps
   return device;
 }
 
-/** The requested audience, checked against DEVICE_AUDIENCES; null means a user token. */
+/** The requested audience, checked against DEVICE_AUDIENCES; null means a machine token. */
 export function resolveAudience(raw: unknown): { audience: string; ttlSeconds: number } | null {
   if (raw === undefined || raw === null || raw === "") return null;
   if (typeof raw !== "string" || !Object.hasOwn(DEVICE_AUDIENCES, raw)) {

@@ -29,6 +29,14 @@ jobs:
           npm test
           npm run check:static-slot-origins
           npm run check:signjwt-callsites
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test shared machine client on Linux
+        env:
+          GOMAXPROCS: '4'
+        run: go test -p 4 ./...
       - uses: https://github.com/opentofu/setup-opentofu@v2
         with:
           tofu_version: '1.11.0'
@@ -44,23 +52,75 @@ jobs:
               if data and b'\0' not in data and not data.endswith(b'\n'):
                   raise SystemExit(f'Missing trailing newline: {file}')
               if file.endswith('.yml'): raise SystemExit(f'Use .yaml: {file}')
-              if '_' in file and not re.search(r'PULL_REQUEST_TEMPLATE|ISSUE_TEMPLATE|\.(md|js|py|webp|png|jpe?g|gif|svg|ico|txt)$', file):
+              if '_' in file and not re.search(r'PULL_REQUEST_TEMPLATE|ISSUE_TEMPLATE|\.(go|md|js|py|webp|png|jpe?g|gif|svg|ico|txt)$', file):
                   raise SystemExit(f'Underscore in filename: {file}')
           PY
           tofu fmt -recursive -check
-      - name: Publish source release
+
+  client:
+    needs: validate
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GOMAXPROCS: '4'
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go test -p 4 ./...
+      - name: Build native machine clients
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          foreach ($target in 'windows/amd64', 'linux/amd64', 'linux/arm64', 'darwin/amd64', 'darwin/arm64') {
+            $env:GOOS, $env:GOARCH = $target.Split('/')
+            $suffix = if ($env:GOOS -eq 'windows') { '.exe' } else { '' }
+            go build -p 4 -trimpath -ldflags '-s -w' -o "dist/romaine-auth-$env:GOOS-$env:GOARCH$suffix" ./cmd/romaine-auth
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: Sign Windows client
+        env:
+          PFX: ${{ secrets.AT_TERMINAL_PFX }}
+          PFX_PASSWORD: ${{ secrets.AT_TERMINAL_PFX_PASSWORD }}
+        run: |
+          if (-not $env:PFX) { throw 'AT_TERMINAL_PFX is not set' }
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Sort-Object FullName -Descending | Select-Object -First 1
+          $pfxFile = Join-Path $env:RUNNER_TEMP 'auth-client.pfx'
+          [IO.File]::WriteAllBytes($pfxFile, [Convert]::FromBase64String($env:PFX))
+          try {
+            & $signtool.FullName sign /fd SHA256 /f $pfxFile /p $env:PFX_PASSWORD dist/romaine-auth-windows-amd64.exe
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          } finally { Remove-Item -LiteralPath $pfxFile }
+      - uses: https://data.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: machine-clients
+          path: dist/*
+      - name: Release tested clients and Go module
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          api="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
-          git fetch --tags
-          last=$(git tag -l 'v0.1.*' --sort=-v:refname | head -1)
-          tag=v0.1.0
-          if [ -n "$last" ]; then tag="v0.1.$(( ${last##*.} + 1 ))"; fi
-          body=$(jq -n --arg tag "$tag" --arg sha "$GITHUB_SHA" '{tag_name:$tag,target_commitish:$sha,name:$tag,body:("Validated source at "+$sha+". Source archives are provided by Forgejo.")}')
-          printf 'Authorization: token %s\n' "$TOKEN" | curl --fail-with-body -sS -X POST --header @- -H 'Content-Type: application/json' -d "$body" "$api/releases"
+          $ErrorActionPreference = 'Stop'
+          $last = (git tag -l 'v0.1.*' | ForEach-Object { if ($_ -match '^v0\.1\.(\d+)$') { [int]$Matches[1] } } | Measure-Object -Maximum).Maximum
+          $tag = "v0.1.$($last + 1)"
+          $api = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
+          $headers = @{ Authorization = "token $env:TOKEN" }
+          $release = Invoke-RestMethod -Method Post -Headers $headers -ContentType 'application/json' "$api/releases" -Body (@{ tag_name=$tag; target_commitish=$env:GITHUB_SHA; name=$tag; draft=$true; body="Machine clients and auth source from $env:GITHUB_SHA. https://openproject.romaine.life/wp/ROMAINE-48" } | ConvertTo-Json)
+          try {
+            foreach ($file in Get-ChildItem dist -File) {
+              Invoke-RestMethod -Method Post -Headers $headers "$api/releases/$($release.id)/assets?name=$($file.Name)" -Form @{attachment=$file} | Out-Null
+            }
+            Invoke-RestMethod -Method Patch -Headers $headers -ContentType 'application/json' "$api/releases/$($release.id)" -Body '{"draft":false}' | Out-Null
+          } catch {
+            Invoke-RestMethod -Method Delete -Headers $headers "$api/releases/$($release.id)" | Out-Null
+            throw
+          }
 
   deploy:
     name: Publish image and checked pin PR
