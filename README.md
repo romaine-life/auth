@@ -37,6 +37,9 @@ An administrator installs host trust with `ssh-host --user USER --principals FIL
 the principals are target-qualified machine identities, one per line, as returned
 by the SSH exchange. The command checks the SSH configuration before replacing it,
 keeps the prior configuration, and reloads the host's SSH listener.
+`ssh-host --user USER --principals FILE --check` changes nothing: it prints `current`
+when the installed CA key, principals and SSH configuration match, otherwise one line
+per part that differs.
 On macOS and Linux, `ssh-host --user USER --principals FILE --user-scope` instead
 installs the CA and exact principal list in the current account's `authorized_keys`.
 This needs no administrator access or listener restart and preserves existing keys.

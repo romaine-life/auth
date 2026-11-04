@@ -35,15 +35,27 @@ func run(args []string) error {
 		user := flags.String("user", "", "local OS login")
 		file := flags.String("principals", "", "file listing explicit authorized machine principals")
 		userScope := flags.Bool("user-scope", false, "install trust in the current Unix account's authorized_keys")
+		check := flags.Bool("check", false, "change nothing: print current, or each part of the host trust that differs")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		if *file == "" || *user == "" {
-			return errors.New("ssh-host --user USER --principals FILE")
+		if *file == "" || *user == "" || (*check && *userScope) {
+			return errors.New("ssh-host --user USER --principals FILE [--check | --user-scope]")
 		}
 		data, err := os.ReadFile(*file)
 		if err != nil {
 			return err
+		}
+		if *check {
+			differences, err := client.SSHHostTrustDifferences(ctx, *user, strings.Fields(string(data)))
+			if err != nil {
+				return err
+			}
+			if len(differences) == 0 {
+				differences = []string{"current"}
+			}
+			fmt.Println(strings.Join(differences, "\n"))
+			return nil
 		}
 		if *userScope {
 			return client.InstallSSHUserTrust(ctx, *user, strings.Fields(string(data)))
