@@ -10,11 +10,19 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 
 	"github.com/romaine-life/auth/client"
 )
+
+// Git Bash rewrites /api/v3/x to C:/Program Files/Git/api/v3/x before this program sees it.
+var rewrittenOPPath = regexp.MustCompile(`^[A-Za-z]:/.*?(/api/v3/)`)
+
+func opPath(arg string) string {
+	return rewrittenOPPath.ReplaceAllString(arg, "$1")
+}
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -142,7 +150,8 @@ func run(args []string) error {
 		if len(args) < 3 || (args[1] != "get" && args[1] != "post" && args[1] != "patch") {
 			return errors.New("op get|post|patch /api/v3/PATH [BODY-FILE]")
 		}
-		if !strings.HasPrefix(args[2], "/api/v3/") {
+		path := opPath(args[2])
+		if !strings.HasPrefix(path, "/api/v3/") {
 			return errors.New("an OpenProject API path is required")
 		}
 		var body []byte
@@ -157,7 +166,7 @@ func run(args []string) error {
 				return err
 			}
 		}
-		return client.OpenProjectRequest(ctx, strings.ToUpper(args[1]), args[2], body, os.Stdout)
+		return client.OpenProjectRequest(ctx, strings.ToUpper(args[1]), path, body, os.Stdout)
 	default:
 		return errors.New("unknown command")
 	}
