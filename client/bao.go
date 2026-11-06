@@ -21,6 +21,9 @@ import (
 // own key, at the mount that trusts that key alone, with no call to auth.romaine.life.
 const BaoURL = "https://bao.home.romaine.life"
 
+// HomeIssuer is the issuer of the tokens OpenBao signs for home services.
+const HomeIssuer = BaoURL + "/v1/identity/oidc"
+
 var homeRole = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func signBaoLogin(reg Registration, s signer) (string, error) {

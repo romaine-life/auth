@@ -47,6 +47,7 @@ type Credentials struct {
 	Principal   string `json:"principal,omitempty"`
 }
 type Claims struct {
+	Iss     string `json:"iss"`
 	Sub     string `json:"sub"`
 	Email   string `json:"email"`
 	Name    string `json:"name"`
@@ -77,6 +78,12 @@ func ParseClaims(token string) (Claims, error) {
 func IsMachine(c Claims) bool {
 	return c.Role == "service" && c.Purpose == "machine" && strings.HasPrefix(c.Sub, "device:") && c.Device != ""
 }
+
+// IsHomeDevice reports a token OpenBao signed for a device. Its sub is an entity UUID,
+// so the device claim names the machine.
+func IsHomeDevice(c Claims) bool {
+	return c.Iss == HomeIssuer && c.Device != ""
+}
 func IsHuman(c Claims) bool {
 	return (c.Role == "admin" || c.Role == "user") && c.Device == "" && c.Purpose == "" && c.Sub != ""
 }
@@ -84,7 +91,7 @@ func TreeOwner(c Claims) (string, error) {
 	if IsHuman(c) {
 		return c.Sub, nil
 	}
-	if IsMachine(c) && c.Apps.Fzt.OwnerSub != "" {
+	if (IsMachine(c) || IsHomeDevice(c)) && c.Apps.Fzt.OwnerSub != "" {
 		return c.Apps.Fzt.OwnerSub, nil
 	}
 	return "", errors.New("this account has no menu/bookmark owner grant")

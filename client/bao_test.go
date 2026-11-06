@@ -87,3 +87,43 @@ func TestHomeTokenRefusals(t *testing.T) {
 		}
 	}
 }
+
+func homeClaims(t *testing.T, iss, device, owner string) Claims {
+	t.Helper()
+	c, err := ParseClaims(jwt(map[string]any{"iss": iss, "sub": "2f1c3a40-entity", "device": device, "apps": map[string]any{"fzt": map[string]string{"owner_sub": owner}}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestHomeTokenSelectsItsTreeOwner(t *testing.T) {
+	owner, err := TreeOwner(homeClaims(t, HomeIssuer, "testpc", "owner"))
+	if err != nil || owner != "owner" {
+		t.Fatalf("owner %q, error %v", owner, err)
+	}
+}
+
+func TestHomeTokenWithoutAnOwnerIsRefused(t *testing.T) {
+	if owner, err := TreeOwner(homeClaims(t, HomeIssuer, "testpc", "")); err == nil {
+		t.Fatalf("got owner %q", owner)
+	}
+}
+
+func TestHomeDeviceNeedsTheIssuerAndADevice(t *testing.T) {
+	if !IsHomeDevice(homeClaims(t, HomeIssuer, "testpc", "owner")) {
+		t.Fatal("a home token wasn't recognized")
+	}
+	for _, c := range []Claims{
+		homeClaims(t, HomeIssuer, "", "owner"),
+		homeClaims(t, HomeIssuer+".example.com", "testpc", "owner"),
+		homeClaims(t, "https://auth.romaine.life", "testpc", "owner"),
+	} {
+		if IsHomeDevice(c) {
+			t.Fatalf("%+v counted as a home device", c)
+		}
+		if owner, err := TreeOwner(c); err == nil {
+			t.Fatalf("%+v selected owner %q", c, owner)
+		}
+	}
+}
