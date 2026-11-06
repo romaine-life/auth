@@ -1,7 +1,7 @@
 // A human enrolls a machine credential once. Device assertions mint credentials
-// for that machine's own account; they never renew a human sign-in. OpenBao keeps
-// its established federation subject, while SSH and OpenProject exchanges require
-// the assertion to bind the exact request. Route handlers supply the lookup and clock.
+// for that machine's own account; they never renew a human sign-in. SSH and OpenProject
+// exchanges require the assertion to bind the exact request. Route handlers supply the
+// lookup and clock.
 import { decodeProtectedHeader, importJWK, jwtVerify, type JWK } from "jose";
 
 /** Where a device posts its assertion; the assertion's `aud` must be exactly this. */
@@ -21,9 +21,6 @@ export const ENROLL_MAX_TOKEN_AGE_SECONDS = 10 * 60;
  *  code, like the OAuth clients, so which services trust a device is reviewed. */
 export const DEVICE_AUDIENCES: Record<string, { ttlSeconds: number }> = {
   machine: { ttlSeconds: 15 * 60 },
-  // OpenBao, the home secret store (nelsong6/openbao): its jwt auth method binds each
-  // role to one device's subject.
-  openbao: { ttlSeconds: 5 * 60 },
   openproject: { ttlSeconds: 2 * 60 * 60 },
   ssh: { ttlSeconds: 10 * 60 },
 };
@@ -91,7 +88,7 @@ export function checkEnrollToken(payload: Record<string, unknown>, now: number):
   return null;
 }
 
-/** The federation subject for a device token: unique per user and device, stable across
+/** The subject of a machine account: unique per user and device, stable across
  *  re-keying, so a third party's policy binds to one machine of one person. */
 export function deviceSubject(userId: string, deviceName: string): string {
   return `device:${userId}/${deviceName}`;

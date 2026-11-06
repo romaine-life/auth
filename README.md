@@ -57,10 +57,10 @@ Provision these with at-home-tools' `op-machine`, which creates a distinct OpenP
 administrator account per machine (Nelson's current permission choice).
 
 Revocation stops new exchanges. Already-issued credentials expire naturally: fifteen
-minutes for first-party machine tokens, ten for SSH certificates, two hours for
-OpenProject, and five minutes for OpenBao. Old clients omitting the audience are refused so they cannot select machine subjects as personal trees. Legacy device-as-human tokens must be
+minutes for first-party machine tokens, ten for SSH certificates, and two hours for
+OpenProject. Old clients omitting the audience are refused so they cannot select machine subjects as personal trees. Legacy device-as-human tokens must be
 discarded by clients; fzt rejects them. Other existing JWT verifiers may accept such
-tokens until their original 24-hour expiry. Existing OpenBao subjects are unchanged.
+tokens until their original 24-hour expiry.
 
 ## Stack
 

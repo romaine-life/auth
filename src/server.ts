@@ -58,13 +58,12 @@ import {
 } from "./ssh-cert-exchange.js";
 import { parseUserEd25519PublicKey, SSH_CERT_SKEW_SECONDS } from "./ssh-cert.js";
 import { machineIdentity, machineTokenInput, machineRequestHash, machineSshPrincipal, openProjectClient, exchangeOpenProjectToken } from "./machine-helpers.js";
-import { mintAuthJwt, mintFederationJwt } from "./mint-jwt.js";
+import { mintAuthJwt } from "./mint-jwt.js";
 import {
   DEVICE_TOKEN_URL,
   DeviceError,
   checkEnrollToken,
   createJtiStore,
-  deviceSubject,
   parseEnrollRequest,
   resolveAudience,
   verifyDeviceAssertion,
@@ -720,8 +719,8 @@ if (process.env.TEST_MODE !== "true") {
       // at the device's next token.
       const u = await approvedUser(dev.userId);
       const identity = machineIdentity(u.id, dev.name);
-      // Existing registrations keep their key and OpenBao subject, but gain a distinct
-      // principal. Never reset its grants or re-enable a disabled principal on exchange.
+      // Existing registrations keep their key, but gain a distinct principal. Never reset
+      // its grants or re-enable a disabled principal on exchange.
       await db.insert(user).values({ ...identity, role: "service", emailVerified: true,
         apps: JSON.stringify({ fzt: { owner_sub: u.id }, ssh: [] }) }).onConflictDoNothing();
       const [machine] = await db.select().from(user).where(eq(user.id, identity.id)).limit(1);
@@ -746,16 +745,6 @@ if (process.env.TEST_MODE !== "true") {
         console.warn("[/api/auth/device/token] OpenProject token:", JSON.stringify({ subject: identity.id, expires_at: signed.expires_at }));
         recordDevice("token", "success_openproject");
         return c.json({ ...signed, subject: identity.id });
-      }
-      if (target?.audience === "openbao") {
-        const signed = await mintFederationJwt({
-          subject: deviceSubject(u.id, dev.name),
-          audience: target.audience,
-          ttlSeconds: target.ttlSeconds,
-        });
-        console.warn("[/api/auth/device/token] minted:", JSON.stringify({ email: u.email, device: dev.name, audience: target.audience, exp: signed.exp }));
-        recordDevice("token", `success_${target.audience}`);
-        return c.json({ token: signed.token, expires_at: signed.exp });
       }
       const signed = await mintAuthJwt(machineTokenInput(u.id, dev.name, apps));
       console.warn("[/api/auth/device/token] minted:", JSON.stringify({ subject: identity.id, device: dev.name, role: "service", exp: signed.exp }));
