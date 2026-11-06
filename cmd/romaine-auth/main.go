@@ -32,7 +32,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject|openbao], or ssh --user USER HOST [COMMAND...]")
+		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, or ssh --user USER HOST [COMMAND...]")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -134,6 +134,21 @@ func run(args []string) error {
 		}
 		if result.Token == "" {
 			return errors.New("exchange returned no token")
+		}
+		return client.Save(*out, result)
+	case "home-token":
+		flags := flag.NewFlagSet("home-token", flag.ContinueOnError)
+		out := flags.String("out", "", "protected output file (required)")
+		role := flags.String("role", "", "the home service's OpenBao token role (required)")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *out == "" || *role == "" || flags.NArg() != 0 {
+			return errors.New("home-token requires --role ROLE and --out FILE; credentials are never printed")
+		}
+		result, err := client.HomeToken(ctx, *role)
+		if err != nil {
+			return err
 		}
 		return client.Save(*out, result)
 	case "ssh":

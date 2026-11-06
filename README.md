@@ -28,6 +28,7 @@ romaine-auth user-login
 romaine-auth whoami --human
 romaine-auth ssh --user nelson nelsonpc hostname
 romaine-auth op get /api/v3/users/me
+romaine-auth home-token --role shows --out FILE
 ```
 
 Enrollment uses a recent browser sign-in only to authorize the public-key registration.
