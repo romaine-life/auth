@@ -3,6 +3,7 @@
 package client
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,5 +34,16 @@ func TestPrivateSSHDirectoryRemainsTraversable(t *testing.T) {
 	}
 	if _, err := os.ReadFile(key); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHomeTokenCacheIsPrivate(t *testing.T) {
+	issuingFixture(t, 300)
+	if _, err := HomeToken(context.Background(), "shows"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(homeTokenPath("shows"))
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("the cached token must be private: %v, %v", info, err)
 	}
 }

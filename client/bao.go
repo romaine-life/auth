@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -25,6 +26,16 @@ const BaoURL = "https://bao.home.romaine.life"
 const HomeIssuer = BaoURL + "/v1/identity/oidc"
 
 var homeRole = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// A login writes to OpenBao's raft log, which took up to 20 s under a NAS disk scrub.
+var baoClient = &http.Client{Timeout: 60 * time.Second, CheckRedirect: requestClient.CheckRedirect}
+
+// homeTokenMargin keeps a caller from receiving a token that dies mid-request.
+const homeTokenMargin = 60 * time.Second
+
+func homeTokenPath(role string) string {
+	return filepath.Join(ConfigDir(), "home-token-"+role+".json")
+}
 
 func signBaoLogin(reg Registration, s signer) (string, error) {
 	nonce := make([]byte, 16)
@@ -63,8 +74,12 @@ func baoCall(ctx context.Context, method, path, baoToken string, body any, out a
 	if baoToken != "" {
 		req.Header.Set("X-Vault-Token", baoToken)
 	}
-	response, e := requestClient.Do(req)
+	response, e := baoClient.Do(req)
 	if e != nil {
+		var timeout interface{ Timeout() bool }
+		if errors.As(e, &timeout) && timeout.Timeout() {
+			return &AuthError{Kind: "timeout", Detail: "OpenBao at " + BaoURL + " took too long to answer"}
+		}
 		return &AuthError{Kind: "unreachable", Detail: "cannot reach OpenBao at " + BaoURL}
 	}
 	defer response.Body.Close()
@@ -79,7 +94,8 @@ func baoCall(ctx context.Context, method, path, baoToken string, body any, out a
 }
 
 // HomeToken returns a short-lived token OpenBao signs for a home service, which the
-// service checks against OpenBao's published keys.
+// service checks against OpenBao's published keys. A token with time left is reused
+// from the config dir, with no call to OpenBao and no use of the machine key.
 func HomeToken(ctx context.Context, role string) (Credentials, error) {
 	var result Credentials
 	if !homeRole.MatchString(role) {
@@ -88,6 +104,11 @@ func HomeToken(ctx context.Context, role string) (Credentials, error) {
 	reg, e := machineRegistration()
 	if e != nil {
 		return result, e
+	}
+	var cache Credentials
+	if readJSON(homeTokenPath(role), &cache) == nil && cache.Token != "" && cache.Subject == reg.Name &&
+		cache.ExpiresAt > time.Now().Add(homeTokenMargin).Unix() {
+		return cache, nil
 	}
 	s, e := machineKey(false)
 	if e != nil {
@@ -121,5 +142,9 @@ func HomeToken(ctx context.Context, role string) (Credentials, error) {
 	if issued.Data.Token == "" {
 		return result, errors.New("OpenBao returned no token")
 	}
-	return Credentials{Token: issued.Data.Token, ExpiresAt: time.Now().Unix() + issued.Data.TTL}, nil
+	result = Credentials{Token: issued.Data.Token, ExpiresAt: time.Now().Unix() + issued.Data.TTL, Subject: reg.Name}
+	// A cache that can't be written, such as a concurrent read holding the file on
+	// Windows, costs the next caller a login; the token itself is still good.
+	_ = Save(homeTokenPath(role), result)
+	return result, nil
 }

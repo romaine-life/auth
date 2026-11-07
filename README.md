@@ -31,7 +31,7 @@ romaine-auth op get /api/v3/users/me
 romaine-auth home-token --role shows --out FILE
 ```
 
-`home-token` (`client.HomeToken`) gets a five-minute token OpenBao signs for a home service, with no call to this service; `IsHomeDevice` recognizes one, and its `device` claim names the machine, because its `sub` is an OpenBao entity UUID.
+`home-token` (`client.HomeToken`) gets a five-minute token OpenBao signs for a home service, with no call to this service, and reuses it from `home-token-<role>.json` beside `machine-token.json` until a minute before it expires; `IsHomeDevice` recognizes one, and its `device` claim names the machine, because its `sub` is an OpenBao entity UUID.
 
 Enrollment uses a recent browser sign-in only to authorize the public-key registration.
 Re-enrollment changes the key registration while keeping the machine account stable.
