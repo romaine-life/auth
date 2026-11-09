@@ -20,7 +20,10 @@ import (
 const trustStart = "# BEGIN auth.romaine.life machine trust"
 const trustEnd = "# END auth.romaine.life machine trust"
 
-func SSHConfig(original, root string) (string, error) {
+var loginPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,63}$`)
+
+// withoutTrustBlock returns sshd_config without the managed trust block.
+func withoutTrustBlock(original string) (string, error) {
 	body := strings.ReplaceAll(original, "\r\n", "\n")
 	if start := strings.Index(body, trustStart); start >= 0 {
 		end := strings.Index(body[start:], trustEnd)
@@ -29,6 +32,14 @@ func SSHConfig(original, root string) (string, error) {
 		}
 		body = body[:start] + body[start+end+len(trustEnd):]
 		body = strings.TrimLeft(body, "\n")
+	}
+	return body, nil
+}
+
+func SSHConfig(original, root string) (string, error) {
+	body, err := withoutTrustBlock(original)
+	if err != nil {
+		return "", err
 	}
 	for _, line := range strings.Split(body, "\n") {
 		words := strings.Fields(line)
@@ -44,7 +55,7 @@ func SSHConfig(original, root string) (string, error) {
 }
 
 func validateSSHPrincipals(user string, principals []string, hostname string) error {
-	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._@-]{0,63}$`).MatchString(user) || len(principals) == 0 {
+	if !loginPattern.MatchString(user) || len(principals) == 0 {
 		return errors.New("an OS user and explicit machine principals are required")
 	}
 	hostname = strings.ToLower(hostname)
@@ -84,6 +95,22 @@ func fetchSSHCA(ctx context.Context) (ssh.PublicKey, error) {
 	return key, nil
 }
 
+// hostPaths gives the host's sshd configuration directory and sshd binary.
+func hostPaths() (root, sshd string) {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(os.Getenv("ProgramData"), "ssh"), filepath.Join(os.Getenv("SystemRoot"), "System32", "OpenSSH", "sshd.exe")
+	}
+	return "/etc/ssh", "/usr/sbin/sshd"
+}
+
+// hostLogin is the principals file name sshd looks up for an OS login (%u).
+func hostLogin(user string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(user)
+	}
+	return user
+}
+
 // hostTrust is the host SSH trust wanted for one OS login: auth's CA key, the
 // login's principals and the sshd_config block naming both.
 type hostTrust struct {
@@ -103,12 +130,8 @@ func wantedHostTrust(ctx context.Context, user string, principals []string) (*ho
 	if err := validateSSHPrincipals(user, principals, hostname); err != nil {
 		return nil, err
 	}
-	t := &hostTrust{root: "/etc/ssh", sshd: "/usr/sbin/sshd", user: user, principals: []byte(strings.Join(principals, "\n") + "\n")}
-	if runtime.GOOS == "windows" {
-		t.root = filepath.Join(os.Getenv("ProgramData"), "ssh")
-		t.sshd = filepath.Join(os.Getenv("SystemRoot"), "System32", "OpenSSH", "sshd.exe")
-		t.user = strings.ToLower(user)
-	}
+	t := &hostTrust{user: hostLogin(user), principals: []byte(strings.Join(principals, "\n") + "\n")}
+	t.root, t.sshd = hostPaths()
 	original, err := os.ReadFile(filepath.Join(t.root, "sshd_config"))
 	if err != nil {
 		return nil, err
@@ -174,32 +197,115 @@ func InstallSSHHostTrust(ctx context.Context, user string, principals []string) 
 	if t.original == t.config {
 		return nil
 	}
-	temp, err := os.CreateTemp(t.root, "sshd-check-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(temp.Name())
-	if _, err = temp.WriteString(t.config); err != nil {
-		temp.Close()
-		return err
-	}
-	temp.Close()
-	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if out, err := exec.CommandContext(checkCtx, t.sshd, "-t", "-f", temp.Name()).CombinedOutput(); err != nil {
-		return fmt.Errorf("SSH configuration refused: %s", strings.TrimSpace(string(out)))
-	}
 	backup := path + ".before-romaine"
 	if _, err = os.Stat(backup); os.IsNotExist(err) {
 		if err = os.WriteFile(backup, []byte(t.original), 0600); err != nil {
 			return err
 		}
 	}
-	if err = writeHostFile(path, []byte(t.config)); err != nil {
+	return applySSHConfig(ctx, t.sshd, path, t.original, t.config)
+}
+
+// InstalledSSHHostLogins names each OS login that has installed machine
+// principals. Reading them requires host administrator privileges; a host
+// with no principals directory has none, which anyone can see.
+func InstalledSSHHostLogins() ([]string, error) {
+	root, _ := hostPaths()
+	if _, err := os.Stat(filepath.Join(root, "romaine-principals")); os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err := requireHostAdmin(); err != nil {
+		return nil, err
+	}
+	return installedLogins(root)
+}
+
+func installedLogins(root string) ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(root, "romaine-principals"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var logins []string
+	for _, entry := range entries {
+		if entry.Type().IsRegular() && !strings.HasPrefix(entry.Name(), ".") {
+			logins = append(logins, entry.Name())
+		}
+	}
+	return logins, nil
+}
+
+// RemoveSSHHostTrust removes an OS login's machine principals. Removing the
+// last login's also removes the sshd_config block and auth's CA key, leaving
+// the host with no machine trust. It requires host administrator privileges.
+func RemoveSSHHostTrust(ctx context.Context, user string) error {
+	if err := requireHostAdmin(); err != nil {
+		return err
+	}
+	root, sshd := hostPaths()
+	return removeHostTrust(root, user, func(path, original, config string) error {
+		return applySSHConfig(ctx, sshd, path, original, config)
+	})
+}
+
+func removeHostTrust(root, user string, apply func(path, original, config string) error) error {
+	if !loginPattern.MatchString(user) {
+		return errors.New("an OS user is required")
+	}
+	dir := filepath.Join(root, "romaine-principals")
+	if err := os.Remove(filepath.Join(dir, hostLogin(user))); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if logins, err := installedLogins(root); err != nil || len(logins) > 0 {
+		return err
+	}
+	path := filepath.Join(root, "sshd_config")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	config, err := withoutTrustBlock(string(original))
+	if err != nil {
+		return err
+	}
+	if config != string(original) {
+		if err = apply(path, string(original), config); err != nil {
+			return err
+		}
+	}
+	for _, leftover := range []string{filepath.Join(root, "romaine-ca.pub"), dir} {
+		if err = os.Remove(leftover); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// applySSHConfig checks a new sshd_config with sshd, writes it and reloads the
+// listener, restoring the original if the reload fails.
+func applySSHConfig(ctx context.Context, sshd, path, original, config string) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), "sshd-check-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	if _, err = temp.WriteString(config); err != nil {
+		temp.Close()
+		return err
+	}
+	temp.Close()
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(checkCtx, sshd, "-t", "-f", temp.Name()).CombinedOutput(); err != nil {
+		return fmt.Errorf("SSH configuration refused: %s", strings.TrimSpace(string(out)))
+	}
+	if err = writeHostFile(path, []byte(config)); err != nil {
 		return err
 	}
 	if err = reloadSSH(ctx); err != nil {
-		if rollback := writeHostFile(path, []byte(t.original)); rollback != nil {
+		if rollback := writeHostFile(path, []byte(original)); rollback != nil {
 			return fmt.Errorf("SSH reload and config restore failed: %w", rollback)
 		}
 		recovery, cancel := context.WithTimeout(context.Background(), 20*time.Second)

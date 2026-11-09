@@ -44,11 +44,34 @@ func run(args []string) error {
 		file := flags.String("principals", "", "file listing explicit authorized machine principals")
 		userScope := flags.Bool("user-scope", false, "install trust in the current Unix account's authorized_keys")
 		check := flags.Bool("check", false, "change nothing: print current, or each part of the host trust that differs")
+		installed := flags.Bool("installed", false, "change nothing: print each OS login with installed machine trust, or none")
+		remove := flags.Bool("remove", false, "remove the login's machine trust; the last login's removal also removes the CA key and sshd_config block")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
+		usage := errors.New("ssh-host --user USER --principals FILE [--check | --user-scope], ssh-host --user USER --remove, or ssh-host --installed")
+		if *installed {
+			if *user != "" || *file != "" || *check || *userScope || *remove {
+				return usage
+			}
+			logins, err := client.InstalledSSHHostLogins()
+			if err != nil {
+				return err
+			}
+			if len(logins) == 0 {
+				logins = []string{"none"}
+			}
+			fmt.Println(strings.Join(logins, "\n"))
+			return nil
+		}
+		if *remove {
+			if *user == "" || *file != "" || *check || *userScope {
+				return usage
+			}
+			return client.RemoveSSHHostTrust(ctx, *user)
+		}
 		if *file == "" || *user == "" || (*check && *userScope) {
-			return errors.New("ssh-host --user USER --principals FILE [--check | --user-scope]")
+			return usage
 		}
 		data, err := os.ReadFile(*file)
 		if err != nil {

@@ -43,6 +43,10 @@ keeps the prior configuration, and reloads the host's SSH listener.
 `ssh-host --user USER --principals FILE --check` changes nothing: it prints `current`
 when the installed CA key, principals and SSH configuration match, otherwise one line
 per part that differs.
+`ssh-host --installed` changes nothing: it prints each OS login with installed
+principals, or `none`. `ssh-host --user USER --remove` deletes that login's
+principals; removing the last login's also removes the CA key and the SSH
+configuration block, checked and reloaded the same way.
 On macOS and Linux, `ssh-host --user USER --principals FILE --user-scope` instead
 installs the CA and exact principal list in the current account's `authorized_keys`.
 This needs no administrator access or listener restart and preserves existing keys.
