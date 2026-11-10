@@ -93,6 +93,31 @@ func baoCall(ctx context.Context, method, path, baoToken string, body any, out a
 	return json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(out)
 }
 
+// baoLogin logs in to OpenBao as this machine, with a token its own key signs.
+func baoLogin(ctx context.Context, reg Registration) (string, error) {
+	s, e := machineKey(false)
+	if e != nil {
+		return "", &AuthError{Kind: "key", Detail: "the machine key is unavailable or locked"}
+	}
+	defer s.Close()
+	assertion, e := signBaoLogin(reg, s)
+	if e != nil {
+		return "", e
+	}
+	var login struct {
+		Auth struct {
+			ClientToken string `json:"client_token"`
+		} `json:"auth"`
+	}
+	if e := baoCall(ctx, http.MethodPost, "/v1/auth/device-"+reg.Name+"/login", "", map[string]string{"role": "login", "jwt": assertion}, &login); e != nil {
+		return "", e
+	}
+	if login.Auth.ClientToken == "" {
+		return "", errors.New("OpenBao returned no login")
+	}
+	return login.Auth.ClientToken, nil
+}
+
 // HomeToken returns a short-lived token OpenBao signs for a home service, which the
 // service checks against OpenBao's published keys. A token with time left is reused
 // from the config dir, with no call to OpenBao and no use of the machine key.
@@ -110,25 +135,9 @@ func HomeToken(ctx context.Context, role string) (Credentials, error) {
 		cache.ExpiresAt > time.Now().Add(homeTokenMargin).Unix() {
 		return cache, nil
 	}
-	s, e := machineKey(false)
-	if e != nil {
-		return result, &AuthError{Kind: "key", Detail: "the machine key is unavailable or locked"}
-	}
-	defer s.Close()
-	assertion, e := signBaoLogin(reg, s)
+	baoToken, e := baoLogin(ctx, reg)
 	if e != nil {
 		return result, e
-	}
-	var login struct {
-		Auth struct {
-			ClientToken string `json:"client_token"`
-		} `json:"auth"`
-	}
-	if e := baoCall(ctx, http.MethodPost, "/v1/auth/device-"+reg.Name+"/login", "", map[string]string{"role": "login", "jwt": assertion}, &login); e != nil {
-		return result, e
-	}
-	if login.Auth.ClientToken == "" {
-		return result, errors.New("OpenBao returned no login")
 	}
 	var issued struct {
 		Data struct {
@@ -136,7 +145,7 @@ func HomeToken(ctx context.Context, role string) (Credentials, error) {
 			TTL   int64  `json:"ttl"`
 		} `json:"data"`
 	}
-	if e := baoCall(ctx, http.MethodGet, "/v1/identity/oidc/token/"+role, login.Auth.ClientToken, nil, &issued); e != nil {
+	if e := baoCall(ctx, http.MethodGet, "/v1/identity/oidc/token/"+role, baoToken, nil, &issued); e != nil {
 		return result, e
 	}
 	if issued.Data.Token == "" {

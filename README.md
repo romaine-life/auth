@@ -62,6 +62,11 @@ synced to `OPENPROJECT_MACHINE_CLIENTS`; the machine receives only the expiring 
 Provision these with at-home-tools' `op-machine`, which creates a distinct OpenProject
 administrator account per machine (Nelson's current permission choice).
 
+The machine client no longer uses `audience=openproject` (OPADMIN-23): a home PC reads
+its own OpenProject client from OpenBao (`secret/devices/<device>/openproject`, nelsong6/openbao)
+with its device login and signs in to OpenProject itself, so OpenProject can answer at
+home only. The server's exchange is removed once OpenProject has left the internet.
+
 Revocation stops new exchanges. Already-issued credentials expire naturally: fifteen
 minutes for first-party machine tokens, ten for SSH certificates, and two hours for
 OpenProject. Old clients omitting the audience are refused so they cannot select machine subjects as personal trees. Legacy device-as-human tokens must be
