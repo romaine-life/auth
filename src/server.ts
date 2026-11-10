@@ -699,10 +699,13 @@ if (process.env.TEST_MODE !== "true") {
   });
 
   app.post("/api/auth/device/token", async (c) => {
+    // What a failure is logged with: the audience asked for, and the device once verified.
+    const attempt: { audience?: string; device?: string; subject?: string } = {};
     try {
       const body = await readJsonObject(c).catch((e: Error) => {
         throw new DeviceError("invalid_request", 400, e.message);
       });
+      attempt.audience = String(body.audience ?? "");
       const target = resolveAudience(body.audience);
       if (!target) throw new DeviceError("invalid_request", 400, "update the machine client: an explicit machine audience is required");
       const dev = await verifyDeviceAssertion(body.assertion, {
@@ -717,8 +720,10 @@ if (process.env.TEST_MODE !== "true") {
       });
       // The role is read from the user row on every exchange, so a demotion takes effect
       // at the device's next token.
+      attempt.device = dev.name;
       const u = await approvedUser(dev.userId);
       const identity = machineIdentity(u.id, dev.name);
+      attempt.subject = identity.id;
       // Existing registrations keep their key, but gain a distinct principal. Never reset
       // its grants or re-enable a disabled principal on exchange.
       await db.insert(user).values({ ...identity, role: "service", emailVerified: true,
@@ -751,7 +756,7 @@ if (process.env.TEST_MODE !== "true") {
       recordDevice("token", "success_machine");
       return c.json({ token: signed.token, expires_at: signed.exp, subject: identity.id });
     } catch (e) {
-      return deviceErrorResponse(c, "token", e);
+      return deviceErrorResponse(c, "token", e, attempt);
     }
   });
 
@@ -769,12 +774,13 @@ async function approvedUser(id: string) {
   return u;
 }
 
-function deviceErrorResponse(c: Context, action: "enroll" | "token", e: unknown) {
+function deviceErrorResponse(c: Context, action: "enroll" | "token", e: unknown, attempt?: Record<string, string | undefined>) {
   if (e instanceof DeviceError) {
+    console.warn(`[/api/auth/device/${action}] refused:`, JSON.stringify({ ...attempt, reason: e.reason }));
     recordDevice(action, e.reason);
     return c.json({ error: e.message, reason: e.reason }, e.status);
   }
-  console.error(`[/api/auth/device/${action}] failed:`, e);
+  console.error(`[/api/auth/device/${action}] failed:`, JSON.stringify(attempt ?? {}), e);
   recordDevice(action, "internal");
   return c.json({ error: "internal error", reason: "internal" }, 500);
 }
