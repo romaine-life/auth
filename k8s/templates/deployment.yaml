@@ -91,7 +91,7 @@ spec:
                 secretKeyRef:
                   name: auth-oauth
                   key: OIDC_CHESS_TACTICS_CLIENT_SECRET
-            # OpenProject relying party (oauth2-proxy on the home NAS). Same degradation as above.
+            # OpenProject relying party (oauth2-proxy on the home cluster). Same degradation as above.
             - name: OIDC_OPENPROJECT_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

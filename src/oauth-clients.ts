@@ -126,8 +126,8 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
   {
     clientId: "openproject",
     name: "OpenProject",
-    // Confidential: the oauth2-proxy gates in front of OpenProject on the home NAS hold the
-    // secret, one per host name: the public name, and the home-network-only one.
+    // Confidential: the oauth2-proxy gate in front of OpenProject on the home cluster holds the
+    // secret. It serves both host names, each with its own callback; both answer only at home.
     isPublic: false,
     secretEnv: "OIDC_OPENPROJECT_CLIENT_SECRET",
     redirectUris: [
