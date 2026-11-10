@@ -147,11 +147,19 @@ func run(args []string) error {
 		if *out == "" || flags.NArg() != 0 {
 			return errors.New("token requires --out FILE; credentials are never printed")
 		}
-		fields := map[string]string{}
-		if *aud != "" {
-			fields["audience"] = *aud
+		// OpenProject answers at home only: its token comes from the machine's own client in
+		// OpenBao, as `op` gets it, never from auth.romaine.life's exchange (OPADMIN-23).
+		var result client.Credentials
+		var err error
+		if *aud == "openproject" {
+			result, err = client.ReadOpenProjectCredentials(ctx)
+		} else {
+			fields := map[string]string{}
+			if *aud != "" {
+				fields["audience"] = *aud
+			}
+			result, err = client.Exchange(ctx, fields)
 		}
-		result, err := client.Exchange(ctx, fields)
 		if err != nil {
 			return err
 		}
