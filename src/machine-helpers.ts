@@ -39,28 +39,3 @@ export function machineSshPrincipal(subject: string, target: string, user: strin
   }
   return `${subject}@${target}/${user}`;
 }
-
-export interface OpenProjectClient { client_id: string; client_secret: string }
-export function openProjectClient(subject: string, raw: string | undefined): OpenProjectClient {
-  let clients: Record<string, OpenProjectClient>;
-  try { clients = JSON.parse(raw ?? "{}"); } catch { throw new Error("OpenProject machine clients are not configured correctly"); }
-  const client = Object.hasOwn(clients, subject) ? clients[subject] : undefined;
-  if (!client || typeof client.client_id !== "string" || !client.client_id || typeof client.client_secret !== "string" || !client.client_secret) {
-    throw new DeviceError("access_denied", 403, "this machine has no OpenProject account");
-  }
-  return client;
-}
-
-export async function exchangeOpenProjectToken(client: OpenProjectClient) {
-  const response = await fetch("https://openproject.romaine.life/oauth/token", {
-    method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000),
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "client_credentials", scope: "api_v3", ...client }),
-  });
-  if (!response.ok) throw new Error(`OpenProject token exchange failed (HTTP ${response.status})`);
-  const result = await response.json() as { access_token?: string; expires_in?: number; token_type?: string };
-  if (!result.access_token || result.token_type?.toLowerCase() !== "bearer" || !Number.isFinite(result.expires_in) || result.expires_in! <= 0 || result.expires_in! > 7200) {
-    throw new Error("OpenProject returned an invalid token response");
-  }
-  return { token: result.access_token, expires_at: Math.floor(Date.now() / 1000) + result.expires_in! };
-}

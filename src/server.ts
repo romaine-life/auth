@@ -57,7 +57,7 @@ import {
   getSshCertSigner,
 } from "./ssh-cert-exchange.js";
 import { parseUserEd25519PublicKey, SSH_CERT_SKEW_SECONDS } from "./ssh-cert.js";
-import { machineIdentity, machineTokenInput, machineRequestHash, machineSshPrincipal, openProjectClient, exchangeOpenProjectToken } from "./machine-helpers.js";
+import { machineIdentity, machineTokenInput, machineRequestHash, machineSshPrincipal } from "./machine-helpers.js";
 import { mintAuthJwt } from "./mint-jwt.js";
 import {
   DEVICE_TOKEN_URL,
@@ -658,7 +658,7 @@ if (process.env.TEST_MODE !== "true") {
   //   body { assertion, audience? }  →  { token, expires_at[, expires_in_hours] }
   //   `assertion` is an ES256 JWT signed by the device's key: header kid = device_id,
   //   iss = sub = device_id, aud = DEVICE_TOKEN_URL, exp - iat ≤ 300 s, a fresh jti.
-  //   Without audience, a 15-minute machine token; third-party/SSH exchanges are distinct.
+  //   Without audience, a 15-minute machine token; SSH exchanges are distinct.
   // Errors are { error, reason }; reason is device_not_registered, device_revoked,
   // invalid_assertion, assertion_replayed, audience_not_allowed, account_not_approved,
   // invalid_request or internal.
@@ -716,7 +716,7 @@ if (process.env.TEST_MODE !== "true") {
         },
         claimJti: deviceAssertionJtis,
         now: () => Math.floor(Date.now() / 1000),
-        requestHash: target?.audience === "ssh" || target?.audience === "openproject" ? machineRequestHash(body) : undefined,
+        requestHash: target?.audience === "ssh" ? machineRequestHash(body) : undefined,
       });
       // The role is read from the user row on every exchange, so a demotion takes effect
       // at the device's next token.
@@ -744,12 +744,6 @@ if (process.env.TEST_MODE !== "true") {
         console.warn("[/api/auth/device/token] SSH certificate:", JSON.stringify({ subject: identity.id, principal, expires_at: signed.validBefore }));
         recordDevice("token", "success_ssh");
         return c.json({ certificate: signed.authorizedKeyLine, expires_at: signed.validBefore, subject: identity.id, principal });
-      }
-      if (target?.audience === "openproject") {
-        const signed = await exchangeOpenProjectToken(openProjectClient(identity.id, process.env.OPENPROJECT_MACHINE_CLIENTS));
-        console.warn("[/api/auth/device/token] OpenProject token:", JSON.stringify({ subject: identity.id, expires_at: signed.expires_at }));
-        recordDevice("token", "success_openproject");
-        return c.json({ ...signed, subject: identity.id });
       }
       const signed = await mintAuthJwt(machineTokenInput(u.id, dev.name, apps));
       console.warn("[/api/auth/device/token] minted:", JSON.stringify({ subject: identity.id, device: dev.name, role: "service", exp: signed.exp }));

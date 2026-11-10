@@ -53,23 +53,19 @@ This needs no administrator access or listener restart and preserves existing ke
 OS logins containing `@`, such as a macOS directory account, are accepted literally.
 
 `POST /api/auth/device/token` requires an explicit audience: `machine` for first-party credentials, or `audience=ssh` with `public_key`, `target` and
-`user`, returning a certificate lasting at most ten minutes. `audience=openproject`
-exchanges the machine proof for an OpenProject-native OAuth token lasting at most
-two hours. Both require `request_hash`, the hexadecimal SHA-256 of sorted-key JSON
-containing the request fields other than `assertion`. OpenProject confidential-client
-credentials are mapped by machine subject in `ng6-auth/openproject-machine-clients`,
-synced to `OPENPROJECT_MACHINE_CLIENTS`; the machine receives only the expiring token.
-Provision these with at-home-tools' `op-machine`, which creates a distinct OpenProject
-administrator account per machine (Nelson's current permission choice).
+`user`, returning a certificate lasting at most ten minutes. It requires `request_hash`,
+the hexadecimal SHA-256 of sorted-key JSON containing the request fields other than
+`assertion`.
 
-The machine client no longer uses `audience=openproject` (OPADMIN-23): a home PC reads
-its own OpenProject client from OpenBao (`secret/devices/<device>/openproject`, nelsong6/openbao)
-with its device login and signs in to OpenProject itself, so OpenProject can answer at
-home only. The server's exchange is removed once OpenProject has left the internet.
+auth has no OpenProject audience: OpenProject answers at home only, so
+`romaine-auth token --audience openproject` and `romaine-auth op` read the machine's own
+OpenProject client from OpenBao (`secret/devices/<device>/openproject`, nelsong6/openbao)
+with its device login and sign in to OpenProject directly. at-home-tools' `op-machine`
+provisions those clients, a distinct OpenProject administrator account per machine
+(Nelson's current permission choice).
 
 Revocation stops new exchanges. Already-issued credentials expire naturally: fifteen
-minutes for first-party machine tokens, ten for SSH certificates, and two hours for
-OpenProject. Old clients omitting the audience are refused so they cannot select machine subjects as personal trees. Legacy device-as-human tokens must be
+minutes for first-party machine tokens and ten for SSH certificates. Old clients omitting the audience are refused so they cannot select machine subjects as personal trees. Legacy device-as-human tokens must be
 discarded by clients; fzt rejects them. Other existing JWT verifiers may accept such
 tokens until their original 24-hour expiry.
 

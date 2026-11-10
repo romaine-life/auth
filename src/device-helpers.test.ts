@@ -98,6 +98,7 @@ test("only declared audiences, and the subject names the user and the device", (
   assert.equal(resolveAudience(undefined), null);
   assert.deepEqual(resolveAudience("ssh"), { audience: "ssh", ttlSeconds: 600 });
   assert.throws(() => resolveAudience("openbao"));
+  assert.throws(() => resolveAudience("openproject"));
   assert.throws(() => resolveAudience("toString"));
   assert.throws(() => resolveAudience("https://api.github.com"));
   assert.equal(deviceSubject("u_1", "treadmill"), "device:u_1/treadmill");

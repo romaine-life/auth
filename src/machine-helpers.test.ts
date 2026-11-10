@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
-import { machineIdentity, machineTokenInput, machineRequestHash, machineSshPrincipal, openProjectClient } from "./machine-helpers.js";
+import { machineIdentity, machineTokenInput, machineRequestHash, machineSshPrincipal } from "./machine-helpers.js";
 import { buildAuthJwtPayload } from "./mint-jwt-helpers.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
 import { DEVICE_TOKEN_URL, verifyDeviceAssertion, createJtiStore } from "./device-helpers.js";
@@ -28,14 +28,6 @@ test("SSH principal is authorized for the particular host and OS account", () =>
   assert.throws(() => machineSshPrincipal("machine", "nelsonpc\nother", "nelson", grants));
 });
 
-test("only provisioned machine subjects obtain OpenProject credentials", () => {
-  const raw = JSON.stringify({ machine: { client_id: "id", client_secret: "secret" } });
-  assert.equal(openProjectClient("machine", raw).client_id, "id");
-  assert.throws(() => openProjectClient("human", raw));
-  assert.throws(() => openProjectClient("toString", "{}"));
-  assert.throws(() => openProjectClient("machine", "malformed"));
-});
-
 test("directory-account SSH logins retain their full name and exact grant", () => {
   const user = "nromai01@stellarus.com";
   const grants = { ssh: [{ target: "fl7vg4g5ww.local", user }] };
@@ -56,7 +48,7 @@ test("captured assertions cannot authorize another SSH key, target, or audience"
     .setProtectedHeader({ alg: "ES256", kid: "dev_1" }).setIssuer("dev_1").setSubject("dev_1")
     .setAudience(DEVICE_TOKEN_URL).setIssuedAt(now).setExpirationTime(now + 120).sign(privateKey);
   const device = { id: "dev_1", userId: "owner", name: "mac", publicKeyJwk: await exportJWK(publicKey), revokedAt: null };
-  for (const altered of [{ ...original, public_key: "attacker-key" }, { ...original, target: "mac" }, { audience: "openproject" }]) {
+  for (const altered of [{ ...original, public_key: "attacker-key" }, { ...original, target: "mac" }, { audience: "machine" }]) {
     await assert.rejects(verifyDeviceAssertion(token, { findDevice: async () => device, claimJti: createJtiStore(() => now), now: () => now, requestHash: machineRequestHash(altered) }));
   }
   const deps = { findDevice: async () => device, claimJti: createJtiStore(() => now), now: () => now, requestHash: machineRequestHash(original) };

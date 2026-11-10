@@ -1,6 +1,6 @@
 // A human enrolls a machine credential once. Device assertions mint credentials
-// for that machine's own account; they never renew a human sign-in. SSH and OpenProject
-// exchanges require the assertion to bind the exact request. Route handlers supply the
+// for that machine's own account; they never renew a human sign-in. SSH exchanges
+// require the assertion to bind the exact request. Route handlers supply the
 // lookup and clock.
 import { decodeProtectedHeader, importJWK, jwtVerify, type JWK } from "jose";
 
@@ -17,11 +17,10 @@ export const ASSERTION_CLOCK_TOLERANCE_SECONDS = 30;
  *  permanent device. */
 export const ENROLL_MAX_TOKEN_AGE_SECONDS = 10 * 60;
 
-/** Third parties a device may ask a token for, and that token's lifetime. Declared in
+/** Audiences a device may ask a token for, and that token's lifetime. Declared in
  *  code, like the OAuth clients, so which services trust a device is reviewed. */
 export const DEVICE_AUDIENCES: Record<string, { ttlSeconds: number }> = {
   machine: { ttlSeconds: 15 * 60 },
-  openproject: { ttlSeconds: 2 * 60 * 60 },
   ssh: { ttlSeconds: 10 * 60 },
 };
 
