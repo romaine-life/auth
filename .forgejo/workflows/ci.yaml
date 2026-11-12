@@ -17,6 +17,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: romaine-life/pipeline-templates/actions/check-fetches@main
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -37,7 +38,7 @@ jobs:
         env:
           GOMAXPROCS: '4'
         run: go test -p 4 ./...
-      - uses: https://github.com/opentofu/setup-opentofu@v2
+      - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: '1.11.0'
           tofu_wrapper: false
@@ -99,7 +100,7 @@ jobs:
             & $signtool.FullName sign /fd SHA256 /f $pfxFile /p $env:PFX_PASSWORD dist/romaine-auth-windows-amd64.exe
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           } finally { Remove-Item -LiteralPath $pfxFile }
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@v4
+      - uses: forgejo/upload-artifact@v4
         with:
           name: machine-clients
           path: dist/*
@@ -151,8 +152,8 @@ jobs:
           fi
       - name: Install Azure CLI
         if: steps.inputs.outputs.changed == 'true'
-        run: curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
-      - uses: https://github.com/azure/login@v3
+        run: curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash # internet: Azure CLI install source
+      - uses: azure/login@v3
         if: steps.inputs.outputs.changed == 'true'
         with:
           client-id: ${{ vars.ARM_CLIENT_ID }}

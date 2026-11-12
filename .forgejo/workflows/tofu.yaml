@@ -33,15 +33,15 @@ jobs:
           if git diff --name-only "$base" HEAD | grep -qE '^(tofu/|\.forgejo/workflows/tofu\.yaml$)'; then
             echo 'changed=true' >> "$GITHUB_OUTPUT"
           fi
-      - uses: https://github.com/opentofu/setup-opentofu@v2
+      - uses: opentofu/setup-opentofu@v2
         if: steps.inputs.outputs.changed == 'true'
         with:
           tofu_version: '1.11.0'
           tofu_wrapper: false
       - name: Install Azure CLI
         if: steps.inputs.outputs.changed == 'true'
-        run: curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash
-      - uses: https://github.com/azure/login@v3
+        run: curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash # internet: Azure CLI install source
+      - uses: azure/login@v3
         if: steps.inputs.outputs.changed == 'true'
         with:
           client-id: ${{ vars.ARM_CLIENT_ID }}
@@ -51,8 +51,8 @@ jobs:
         if: steps.inputs.outputs.changed == 'true'
         working-directory: tofu
         run: |
-          curl -fsSL -o shared-providers.tf https://raw.githubusercontent.com/romaine-life/infra-bootstrap/main/tofu/provider/shared-providers.tf
-          curl -fsSL -o .terraform.lock.hcl https://raw.githubusercontent.com/romaine-life/infra-bootstrap/main/tofu/provider/.terraform.lock.hcl
+          curl -fsSL -o shared-providers.tf https://artifacts.home.romaine.life/general/githubusercontent/romaine-life/infra-bootstrap/main/tofu/provider/shared-providers.tf
+          curl -fsSL -o .terraform.lock.hcl https://artifacts.home.romaine.life/general/githubusercontent/romaine-life/infra-bootstrap/main/tofu/provider/.terraform.lock.hcl
       - name: Initialize and plan
         if: steps.inputs.outputs.changed == 'true'
         working-directory: tofu
@@ -60,7 +60,7 @@ jobs:
           set -euo pipefail
           tofu init -backend-config="resource_group_name=infra" -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" -backend-config="container_name=tfstate" -backend-config="key=auth.tfstate"
           tofu plan -out=tfplan
-      - uses: https://data.forgejo.org/forgejo/upload-artifact@v4
+      - uses: forgejo/upload-artifact@v4
         if: steps.inputs.outputs.changed == 'true'
         with:
           name: auth-infrastructure-plan
