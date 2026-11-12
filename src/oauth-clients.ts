@@ -161,6 +161,16 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
     skipConsent: true,
   },
   {
+    clientId: "torrent",
+    name: "Torrent",
+    // Confidential: the oauth2-proxy gate in front of qBittorrent on the home cluster holds the
+    // secret. The host answers only at home.
+    isPublic: false,
+    secretEnv: "OIDC_TORRENT_CLIENT_SECRET",
+    redirectUris: ["https://torrent.home.romaine.life/oauth2/callback"],
+    skipConsent: true,
+  },
+  {
     clientId: "spt",
     name: "spt",
     // Retired 2026-10-27: spt authorizes with its own relay key and signs in to nothing here.
