@@ -17,7 +17,8 @@ menu and bookmark trees, and `apps.ssh` is an explicit array of `{target,user}`.
 
 The Go `client` package and CI-released `romaine-auth` executable share the Windows
 TPM key, macOS Keychain or Linux KWallet/Secret Service credential. There is no
-plaintext key fallback. `user-login` stores personal credentials in `user-token.json`;
+plaintext key fallback. The TPM takes one command at a time and turns the rest away
+while busy, so on Windows a busy answer is retried for up to ten seconds (AUT-5). `user-login` stores personal credentials in `user-token.json`;
 machine refresh uses `machine-token.json`. Neither reads the old mixed
 `auth-token.json`, and machine renewal never updates a human credential.
 
