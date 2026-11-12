@@ -5,7 +5,7 @@ image:
   # (e.g. 5651694) would otherwise be read as an int, round-tripped
   # through Helm's float-backed value pipeline, and rendered as
   # "5.651694e+06" — which is not a real ACR tag. CI writes the quoted form.
-  tag: "1da4df0"
+  tag: "c231098"
 
 externalSecret:
   createStore: true
