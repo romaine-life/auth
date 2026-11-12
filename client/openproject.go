@@ -104,8 +104,44 @@ func OpenProjectRequest(ctx context.Context, method, path string, body []byte, o
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return fmt.Errorf("OpenProject returned HTTP %d", response.StatusCode)
+		return openProjectError(response)
 	}
 	_, err = io.Copy(out, response.Body)
 	return err
+}
+
+// openProjectError reports a refused API call with OpenProject's own reason: its error
+// body's errorIdentifier and message, and each of a MultipleErrors body's inner errors.
+func openProjectError(response *http.Response) error {
+	type apiError struct {
+		ErrorIdentifier string `json:"errorIdentifier"`
+		Message         string `json:"message"`
+		Embedded        struct {
+			Errors []struct {
+				ErrorIdentifier string `json:"errorIdentifier"`
+				Message         string `json:"message"`
+			} `json:"errors"`
+		} `json:"_embedded"`
+	}
+	var body apiError
+	raw, _ := io.ReadAll(io.LimitReader(response.Body, 1<<16))
+	if json.Unmarshal(raw, &body) != nil || (body.Message == "" && body.ErrorIdentifier == "") {
+		detail := strings.TrimSpace(string(raw))
+		if len(detail) > 500 {
+			detail = detail[:500] + "..."
+		}
+		if detail == "" {
+			return fmt.Errorf("OpenProject returned HTTP %d", response.StatusCode)
+		}
+		return fmt.Errorf("OpenProject returned HTTP %d: %s", response.StatusCode, detail)
+	}
+	reasons := []string{}
+	for _, inner := range body.Embedded.Errors {
+		reasons = append(reasons, inner.Message)
+	}
+	message := body.Message
+	if len(reasons) > 0 && message != strings.Join(reasons, " ") {
+		message += " (" + strings.Join(reasons, "; ") + ")"
+	}
+	return fmt.Errorf("OpenProject returned HTTP %d %s: %s", response.StatusCode, body.ErrorIdentifier, message)
 }

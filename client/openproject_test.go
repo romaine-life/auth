@@ -88,3 +88,23 @@ func TestOpenProjectRefusesAMissingClientAndABadAnswer(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenProjectRefusalCarriesItsReason(t *testing.T) {
+	for _, answer := range []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{400, `{"_type":"Error","errorIdentifier":"urn:openproject-org:api:v3:errors:InvalidRequestBody","message":"The request could not be parsed as JSON."}`,
+			"OpenProject returned HTTP 400 urn:openproject-org:api:v3:errors:InvalidRequestBody: The request could not be parsed as JSON."},
+		{422, `{"_type":"Error","errorIdentifier":"urn:openproject-org:api:v3:errors:MultipleErrors","message":"Multiple field constraints have been violated.","_embedded":{"errors":[{"message":"Subject can't be blank."},{"message":"Type is not set."}]}}`,
+			"Multiple field constraints have been violated. (Subject can't be blank.; Type is not set.)"},
+		{502, `Bad Gateway`, "OpenProject returned HTTP 502: Bad Gateway"},
+		{500, ``, "OpenProject returned HTTP 500"},
+	} {
+		err := openProjectError(&http.Response{StatusCode: answer.status, Body: io.NopCloser(strings.NewReader(answer.body))})
+		if err == nil || !strings.Contains(err.Error(), answer.want) {
+			t.Fatalf("HTTP %d %s: got %v, want %q", answer.status, answer.body, err, answer.want)
+		}
+	}
+}
