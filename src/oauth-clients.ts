@@ -171,6 +171,16 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
     skipConsent: true,
   },
   {
+    clientId: "artifact-keeper",
+    name: "Artifact Keeper",
+    // Confidential: Artifact Keeper on the home cluster (nelsong6/artifact-keeper) does the code
+    // exchange itself, as its OIDC sign-in provider. The host answers only at home.
+    isPublic: false,
+    secretEnv: "OIDC_ARTIFACT_KEEPER_CLIENT_SECRET",
+    redirectUris: ["https://artifacts.home.romaine.life/api/v1/auth/sso/oidc/callback"],
+    skipConsent: true,
+  },
+  {
     clientId: "spt",
     name: "spt",
     // Retired 2026-10-27: spt authorizes with its own relay key and signs in to nothing here.

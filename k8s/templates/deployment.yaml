@@ -109,6 +109,12 @@ spec:
                 secretKeyRef:
                   name: auth-oauth
                   key: OIDC_TORRENT_CLIENT_SECRET
+            # Artifact Keeper relying party (the home cluster). Same degradation as above.
+            - name: OIDC_ARTIFACT_KEEPER_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-oauth
+                  key: OIDC_ARTIFACT_KEEPER_CLIENT_SECRET
             # Glimmung-managed slot origin admin surface
             # (/api/admin/origins/*). Inbound auth: k8s SA tokens signed by
             # the cluster OIDC issuer below, with audience = this service.
