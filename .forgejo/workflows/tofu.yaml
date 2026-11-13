@@ -38,9 +38,8 @@ jobs:
         with:
           tofu_version: '1.11.0'
           tofu_wrapper: false
-      - name: Install Azure CLI
+      - uses: romaine-life/pipeline-templates/actions/azure-cli@main
         if: steps.inputs.outputs.changed == 'true'
-        run: curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash # internet: Azure CLI install source
       - uses: azure/login@v3
         if: steps.inputs.outputs.changed == 'true'
         with:

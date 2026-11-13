@@ -150,9 +150,8 @@ jobs:
           if git diff HEAD^ HEAD --name-only | grep -qE '^(src/|package(-lock)?\.json$|tsconfig\.json$|drizzle\.config\.ts$|Dockerfile$|\.dockerignore$|\.forgejo/workflows/ci\.yaml$)'; then
             echo 'changed=true' >> "$GITHUB_OUTPUT"
           fi
-      - name: Install Azure CLI
+      - uses: romaine-life/pipeline-templates/actions/azure-cli@main
         if: steps.inputs.outputs.changed == 'true'
-        run: curl -fsSL https://aka.ms/InstallAzureCLIDeb | bash # internet: Azure CLI install source
       - uses: azure/login@v3
         if: steps.inputs.outputs.changed == 'true'
         with:
