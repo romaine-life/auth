@@ -53,7 +53,7 @@ jobs:
           npm test
           npm run check:static-slot-origins
           npm run check:signjwt-callsites
-      - uses: actions/setup-go@v6
+      - uses: romaine-life/pipeline-templates/actions/setup-go@main
         with:
           go-version-file: go.mod
           cache: false
@@ -96,7 +96,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+      - uses: romaine-life/pipeline-templates/actions/setup-go@main
         with:
           go-version-file: go.mod
           cache: false
