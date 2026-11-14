@@ -6,7 +6,7 @@ on:
     branches: [main]
   workflow_dispatch:
 concurrency:
-  group: opentofu-auth.tfstate
+  group: ${{ github.event_name == 'pull_request' && format('opentofu-auth-pr-{0}', github.event.pull_request.number) || 'opentofu-auth.tfstate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   tofu:
@@ -56,10 +56,12 @@ jobs:
       - name: Initialize and plan
         if: steps.inputs.outputs.changed == 'true'
         working-directory: tofu
+        env:
+          STATE_LOCK: ${{ github.event_name != 'pull_request' }}
         run: |
           set -euo pipefail
           tofu init -backend-config="resource_group_name=infra" -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}" -backend-config="container_name=tfstate" -backend-config="key=auth.tfstate"
-          tofu plan -out=tfplan
+          tofu plan -lock="$STATE_LOCK" -out=tfplan
       - uses: forgejo/upload-artifact@v4
         if: steps.inputs.outputs.changed == 'true'
         with:
