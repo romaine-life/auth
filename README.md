@@ -29,8 +29,11 @@ romaine-auth user-login
 romaine-auth whoami --human
 romaine-auth ssh --user nelson nelsonpc hostname
 romaine-auth op get /api/v3/users/me
+romaine-auth bao get secret/data/home/ntfy
 romaine-auth home-token --role shows --out FILE
 ```
+
+`bao` (`client.BaoRequest`) makes one OpenBao API call as this machine's device login, at a path under `/v1/` (`get`, `list`, `post`, `patch`, `delete`; a body from a file or `--body-stdin`, never the command line). `patch` sends a JSON merge patch, so `{"data":{"key":null}}` removes one value. What it may do is the device role's policies in nelsong6/openbao; the home PCs Claude works on keep every secret there (BAO-12).
 
 `home-token` (`client.HomeToken`) gets a five-minute token OpenBao signs for a home service, with no call to this service, and reuses it from `home-token-<role>.json` beside `machine-token.json` until a minute before it expires; `IsHomeDevice` recognizes one, and its `device` claim names the machine, because its `sub` is an OpenBao entity UUID.
 

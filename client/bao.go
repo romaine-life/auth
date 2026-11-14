@@ -157,3 +157,51 @@ func HomeToken(ctx context.Context, role string) (Credentials, error) {
 	_ = Save(homeTokenPath(role), result)
 	return result, nil
 }
+
+var baoPath = regexp.MustCompile(`^[a-z0-9][a-zA-Z0-9_./-]*$`)
+
+// BaoRequest makes one call to OpenBao's API as this machine, at PATH under /v1/ (such as
+// secret/data/services/openproject), and copies OpenBao's answer to out. What the machine
+// may do is its device role's policies (nelsong6/openbao k8s/setup/devices/). PATCH sends
+// a JSON merge patch, so a null value removes that key.
+func BaoRequest(ctx context.Context, method, path string, body []byte, out io.Writer) error {
+	if !baoPath.MatchString(path) || strings.Contains(path, "..") {
+		return errors.New("an OpenBao API path under /v1/ is required, such as secret/data/home/ntfy")
+	}
+	reg, e := machineRegistration()
+	if e != nil {
+		return e
+	}
+	token, e := baoLogin(ctx, reg)
+	if e != nil {
+		return e
+	}
+	req, e := http.NewRequestWithContext(ctx, method, BaoURL+"/v1/"+path, bytes.NewReader(body))
+	if e != nil {
+		return e
+	}
+	req.Header.Set("X-Vault-Token", token)
+	if method == http.MethodPatch {
+		req.Header.Set("Content-Type", "application/merge-patch+json")
+	} else {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	response, e := baoClient.Do(req)
+	if e != nil {
+		return &AuthError{Kind: "unreachable", Detail: "cannot reach OpenBao at " + BaoURL}
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		var refusal struct {
+			Errors []string `json:"errors"`
+		}
+		json.NewDecoder(io.LimitReader(response.Body, 16384)).Decode(&refusal)
+		reason := fmt.Sprintf("OpenBao answered %s %s with HTTP %d", method, path, response.StatusCode)
+		if len(refusal.Errors) > 0 {
+			reason += ": " + strings.Join(refusal.Errors, "; ")
+		}
+		return errors.New(reason)
+	}
+	_, e = io.Copy(out, response.Body)
+	return e
+}

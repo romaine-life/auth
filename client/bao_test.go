@@ -257,3 +257,58 @@ func TestHomeDeviceNeedsTheIssuerAndADevice(t *testing.T) {
 		}
 	}
 }
+
+func TestBaoRequestCallsAsTheDevice(t *testing.T) {
+	var got *http.Request
+	var sent string
+	baoFixture(t, func(r *http.Request) (int, string) {
+		if r.URL.Path == "/v1/auth/device-testpc/login" {
+			return 200, `{"auth":{"client_token":"device-token"}}`
+		}
+		got = r
+		b, _ := io.ReadAll(r.Body)
+		sent = string(b)
+		return 200, `{"data":{"version":3}}`
+	})
+	var out strings.Builder
+	if err := BaoRequest(context.Background(), http.MethodPatch, "secret/data/services/openproject", []byte(`{"data":{"cookie-secret":null}}`), &out); err != nil {
+		t.Fatal(err)
+	}
+	if got.URL.Path != "/v1/secret/data/services/openproject" || got.Method != http.MethodPatch ||
+		got.Header.Get("X-Vault-Token") != "device-token" || got.Header.Get("Content-Type") != "application/merge-patch+json" ||
+		sent != `{"data":{"cookie-secret":null}}` || out.String() != `{"data":{"version":3}}` {
+		t.Fatalf("request %s %s token %q type %q body %q, answer %q", got.Method, got.URL.Path, got.Header.Get("X-Vault-Token"), got.Header.Get("Content-Type"), sent, out.String())
+	}
+}
+
+func TestBaoRequestReportsOpenBaosReason(t *testing.T) {
+	baoFixture(t, func(r *http.Request) (int, string) {
+		if r.URL.Path == "/v1/auth/device-testpc/login" {
+			return 200, `{"auth":{"client_token":"device-token"}}`
+		}
+		if r.URL.Path == "/v1/secret/data/missing" {
+			return 404, `{"errors":[]}`
+		}
+		return 403, `{"errors":["1 error occurred:\n\t* permission denied\n\n"]}`
+	})
+	err := BaoRequest(context.Background(), http.MethodGet, "sys/policies/acl/admin", nil, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 403") || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("error %v", err)
+	}
+	err = BaoRequest(context.Background(), http.MethodGet, "secret/data/missing", nil, io.Discard)
+	if err == nil || err.Error() != "OpenBao answered GET secret/data/missing with HTTP 404" {
+		t.Fatalf("error %v", err)
+	}
+}
+
+func TestBaoRequestTakesOnlyAnAPIPath(t *testing.T) {
+	baoFixture(t, func(r *http.Request) (int, string) {
+		t.Fatalf("called OpenBao for a bad path: %s", r.URL)
+		return 0, ""
+	})
+	for _, path := range []string{"", "/v1/secret/data/x", "https://elsewhere/v1/x", "secret/../sys/seal", "C:/Program Files/Git/v1/x"} {
+		if err := BaoRequest(context.Background(), http.MethodGet, path, nil, io.Discard); err == nil {
+			t.Fatalf("accepted %q", path)
+		}
+	}
+}

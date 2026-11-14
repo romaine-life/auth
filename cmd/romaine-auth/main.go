@@ -32,7 +32,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, or ssh --user USER HOST [COMMAND...]")
+		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, bao get|list|post|patch|delete PATH, or ssh --user USER HOST [COMMAND...]")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -200,20 +200,34 @@ func run(args []string) error {
 		if !strings.HasPrefix(path, "/api/v3/") {
 			return errors.New("an OpenProject API path is required")
 		}
-		var body []byte
-		var err error
-		if len(args) > 3 {
-			if args[3] == "--body-stdin" {
-				body, err = io.ReadAll(io.LimitReader(os.Stdin, 10<<20))
-			} else {
-				body, err = os.ReadFile(filepath.Clean(args[3]))
-			}
-			if err != nil {
-				return err
-			}
+		body, err := requestBody(args[3:])
+		if err != nil {
+			return err
 		}
 		return client.OpenProjectRequest(ctx, strings.ToUpper(args[1]), path, body, os.Stdout)
+	case "bao":
+		methods := map[string]string{"get": "GET", "list": "LIST", "post": "POST", "patch": "PATCH", "delete": "DELETE"}
+		if len(args) < 3 || len(args) > 4 || methods[args[1]] == "" {
+			return errors.New("bao get|list|post|patch|delete PATH [BODY-FILE | --body-stdin], PATH under /v1/ such as secret/data/home/ntfy")
+		}
+		body, err := requestBody(args[3:])
+		if err != nil {
+			return err
+		}
+		return client.BaoRequest(ctx, methods[args[1]], args[2], body, os.Stdout)
 	default:
 		return errors.New("unknown command")
 	}
+}
+
+// requestBody reads an API call's body from the file named, or stdin for --body-stdin,
+// so a secret never goes on the command line.
+func requestBody(args []string) ([]byte, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	if args[0] == "--body-stdin" {
+		return io.ReadAll(io.LimitReader(os.Stdin, 10<<20))
+	}
+	return os.ReadFile(filepath.Clean(args[0]))
 }
