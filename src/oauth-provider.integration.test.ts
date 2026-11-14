@@ -176,10 +176,14 @@ test("the generated schema applies and the declared clients reconcile into it", 
     clients.rows.map((row) => row.client_id),
     ["ambience", "argocd", "artifact-keeper", "chess-tactics", "forgejo", "grafana", "openbao", "openproject", "spt", "torrent"],
   );
-  const spt = await client.query<{ disabled: boolean }>(
-    `SELECT disabled FROM "oauthClient" WHERE "clientId" = 'spt'`,
+  const disabled = await client.query<{ client_id: string }>(
+    'SELECT "clientId" AS client_id FROM "oauthClient" WHERE disabled ORDER BY "clientId"',
   );
-  assert.equal(spt.rows[0]?.disabled, true, "a retired client must be disabled");
+  assert.deepEqual(
+    disabled.rows.map((row) => row.client_id),
+    ["openproject", "spt"],
+    "exactly the retired clients must be disabled",
+  );
   // Grafana is confidential outright: it has always held a secret.
   const grafana = clients.rows.find((row) => row.client_id === "grafana");
   assert.equal(grafana?.public, false, "grafana must be registered confidential");

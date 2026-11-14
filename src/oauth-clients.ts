@@ -126,15 +126,12 @@ export const OAUTH_CLIENTS: OAuthClientDeclaration[] = [
   {
     clientId: "openproject",
     name: "OpenProject",
-    // Confidential: the oauth2-proxy gate in front of OpenProject on the home cluster holds the
-    // secret. It serves both host names, each with its own callback; both answer only at home.
-    isPublic: false,
-    secretEnv: "OIDC_OPENPROJECT_CLIENT_SECRET",
-    redirectUris: [
-      "https://openproject.romaine.life/oauth2/callback",
-      "https://openproject.home.romaine.life/oauth2/callback",
-    ],
+    // Retired 2026-11-14: OpenProject has no sign-in gate in front of it; people sign in with an
+    // OpenProject password and machines with OpenProject's own OAuth clients.
+    isPublic: true,
+    redirectUris: ["https://openproject.home.romaine.life/oauth2/callback"],
     skipConsent: true,
+    retired: true,
   },
   {
     clientId: "openbao",

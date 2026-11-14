@@ -151,7 +151,7 @@ jobs:
             Write-Host "$tag is already released"
             exit 0
           }
-          $release = Invoke-RestMethod -Method Post -Headers $headers -ContentType 'application/json' "$api/releases" -Body (@{ tag_name=$tag; target_commitish=$env:GITHUB_SHA; name=$tag; draft=$true; body="Machine clients and auth source from $env:GITHUB_SHA. https://openproject.romaine.life/wp/ROMAINE-48" } | ConvertTo-Json)
+          $release = Invoke-RestMethod -Method Post -Headers $headers -ContentType 'application/json' "$api/releases" -Body (@{ tag_name=$tag; target_commitish=$env:GITHUB_SHA; name=$tag; draft=$true; body="Machine clients and auth source from $env:GITHUB_SHA. https://openproject.home.romaine.life/wp/ROMAINE-48" } | ConvertTo-Json)
           try {
             foreach ($file in Get-ChildItem dist -File) {
               Invoke-RestMethod -Method Post -Headers $headers "$api/releases/$($release.id)/assets?name=$($file.Name)" -Form @{attachment=$file} | Out-Null
@@ -226,7 +226,7 @@ jobs:
           export GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
           git push origin "HEAD:refs/heads/$branch"
           unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
-          body=$(jq -n --arg head "$branch" --arg tag "$IMAGE_TAG" '{base:"main",head:$head,title:("chore: pin auth image "+$tag),body:"Validated image pin. https://openproject.romaine.life/wp/FORGEJO-3"}')
+          body=$(jq -n --arg head "$branch" --arg tag "$IMAGE_TAG" '{base:"main",head:$head,title:("chore: pin auth image "+$tag),body:"Validated image pin. https://openproject.home.romaine.life/wp/FORGEJO-3"}')
           pr=$(printf 'Authorization: token %s\n' "$TOKEN" | curl --fail-with-body -sS -X POST --header @- -H 'Content-Type: application/json' -d "$body" "$api/pulls")
           number=$(echo "$pr" | jq -r .number)
           printf 'Authorization: token %s\n' "$TOKEN" | curl --fail-with-body -sS -X POST --header @- -H 'Content-Type: application/json' -d '{"Do":"squash","merge_when_checks_succeed":true,"delete_branch_after_merge":true}' "$api/pulls/$number/merge"

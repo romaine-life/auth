@@ -16,7 +16,7 @@ import (
 
 // OpenProjectURL is the home OpenProject (nelsong6/openproject). The home network's DNS
 // answers its name, so machine calls stay at home (OPADMIN-23).
-const OpenProjectURL = "https://openproject.romaine.life"
+const OpenProjectURL = "https://openproject.home.romaine.life"
 
 var openProjectClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
