@@ -33,11 +33,12 @@ jobs:
           if git diff --name-only "$base" HEAD | grep -qE '^(tofu/|\.forgejo/workflows/tofu\.yaml$)'; then
             echo 'changed=true' >> "$GITHUB_OUTPUT"
           fi
-      - uses: opentofu/setup-opentofu@v2
+      - uses: romaine-life/pipeline-templates/actions/home-cache@main
+        if: steps.inputs.outputs.changed == 'true'
+      - uses: romaine-life/pipeline-templates/actions/setup-opentofu@main
         if: steps.inputs.outputs.changed == 'true'
         with:
-          tofu_version: '1.11.0'
-          tofu_wrapper: false
+          tofu-version: '1.11.0'
       - uses: romaine-life/pipeline-templates/actions/azure-cli@main
         if: steps.inputs.outputs.changed == 'true'
       - uses: azure/login@v3
