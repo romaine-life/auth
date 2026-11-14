@@ -3,7 +3,7 @@ image:
   repository: romainecr.azurecr.io/auth
   # The release version CI built the image as (v0.1.N). Quoted so YAML
   # always reads a tag as a string; CI writes the quoted form.
-  tag: "0788a14"
+  tag: "v0.1.48"
 
 externalSecret:
   createStore: true
