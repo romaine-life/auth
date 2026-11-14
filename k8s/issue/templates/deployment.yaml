@@ -56,10 +56,6 @@ spec:
             # doesn't leak into prod's .romaine.life cookies.
             - name: COOKIE_DOMAIN
               value: {{ .Values.cookieDomain | quote }}
-            # Surface a build identifier so the footer sigil renders the
-            # per-install image tag rather than "dev".
-            - name: GIT_SHA
-              value: {{ .Values.image.tag | quote }}
           resources:
             requests:
               cpu: 25m

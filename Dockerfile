@@ -24,6 +24,10 @@ COPY --from=builder --chown=1001:1001 /app/node_modules node_modules
 COPY --from=builder --chown=1001:1001 /app/dist dist
 COPY --from=builder --chown=1001:1001 /app/package.json package.json
 
+# The release version the footer shows; a local build shows dev.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001 && \
     chown nodejs:nodejs /app

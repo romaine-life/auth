@@ -14,11 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.diff.outputs.code }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: romaine-life/pipeline-templates/actions/check-fetches@main
+      # One number per commit for the client release and the image (PIPT-7).
+      - id: version
+        uses: romaine-life/pipeline-templates/actions/release-version@main
+        with:
+          prefix: v0.1
+          publish: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
       - id: diff
         env:
           EVENT: ${{ github.event_name }}
@@ -129,15 +137,20 @@ jobs:
           path: dist/*
       - name: Release tested clients and Go module
         id: release
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.tag != ''
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.changes.outputs.tag }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $last = (git tag -l 'v0.1.*' | ForEach-Object { if ($_ -match '^v0\.1\.(\d+)$') { [int]$Matches[1] } } | Measure-Object -Maximum).Maximum
-          $tag = "v0.1.$($last + 1)"
+          $tag = $env:TAG
           $api = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}"
           $headers = @{ Authorization = "token $env:TOKEN" }
+          # A re-run of a released commit keeps its number and release.
+          if (Invoke-RestMethod -Headers $headers "$api/releases?limit=50" | Where-Object tag_name -eq $tag) {
+            Write-Host "$tag is already released"
+            exit 0
+          }
           $release = Invoke-RestMethod -Method Post -Headers $headers -ContentType 'application/json' "$api/releases" -Body (@{ tag_name=$tag; target_commitish=$env:GITHUB_SHA; name=$tag; draft=$true; body="Machine clients and auth source from $env:GITHUB_SHA. https://openproject.romaine.life/wp/ROMAINE-48" } | ConvertTo-Json)
           try {
             foreach ($file in Get-ChildItem dist -File) {
@@ -158,7 +171,7 @@ jobs:
 
   deploy:
     name: Publish image and checked pin PR
-    needs: validate
+    needs: [changes, validate]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: [ubuntu-latest, upstairspc-linux]
     enable-openid-connect: true
@@ -183,11 +196,12 @@ jobs:
           subscription-id: ${{ vars.ARM_SUBSCRIPTION_ID }}
       - name: Build and publish image
         if: steps.inputs.outputs.changed == 'true'
+        env:
+          tag: ${{ needs.changes.outputs.version }}
         run: |
           set -euo pipefail
           az acr login --name romainecr
-          tag="${GITHUB_SHA:0:7}"
-          docker build --network host -t "romainecr.azurecr.io/auth:$tag" .
+          docker build --network host --build-arg "APP_VERSION=$tag" -t "romainecr.azurecr.io/auth:$tag" .
           docker run --rm --network none --entrypoint sh "romainecr.azurecr.io/auth:$tag" -c 'test "$(id -u)" = 1001 && test "$(stat -c %u /app)" = 1001 && test -z "$(find /app ! -user nodejs -print -quit)"'
           docker push "romainecr.azurecr.io/auth:$tag"
           echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"

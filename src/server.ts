@@ -897,7 +897,7 @@ app.get("/.well-known/openid-configuration", (c) => {
 // brown, iris animation, off-world emigration ticker, pyramid corner mark.
 // Design handoff from claude.ai/design lives in design-fetch/.
 
-const BUILD = (process.env.GIT_SHA ?? "dev").slice(0, 7);
+const BUILD = process.env.APP_VERSION ?? "dev";
 
 // Generate the iris SVG once at module load. Procedural geometry — 24
 // filaments + 60 minor ticks (skipping every 5th) — same shape the design's
