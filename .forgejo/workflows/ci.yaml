@@ -173,7 +173,7 @@ jobs:
     name: Publish image and checked pin PR
     needs: [changes, validate]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: [ubuntu-latest, upstairspc-linux]
+    runs-on: ubuntu-latest
     enable-openid-connect: true
     steps:
       - uses: actions/checkout@v4
