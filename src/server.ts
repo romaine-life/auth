@@ -3935,7 +3935,12 @@ async function start(): Promise<void> {
   });
 }
 
-start().catch((error) => {
-  console.error("[startup] failed:", error);
-  process.exit(1);
-});
+// The image's self-test (src/self-test.ts) checks the app without serving it.
+if (process.env.SELF_TEST !== "true") {
+  start().catch((error) => {
+    console.error("[startup] failed:", error);
+    process.exit(1);
+  });
+}
+
+export { app };

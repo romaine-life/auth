@@ -1,0 +1,38 @@
+name: Checks
+
+# The check no suite runs here: this repository's file conventions (a trailing newline,
+# .yaml rather than .yml, no underscores in names but where a format expects them). It reads
+# every tracked file, so it runs on every change. The go, web-app, release and tofu suites
+# run the rest (pipeline-templates fleet.json).
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check-conventions:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Every tracked file follows the conventions
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess, re
+          for file in subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0'):
+              if not file: continue
+              data = pathlib.Path(file).read_bytes()
+              if data and b'\0' not in data and not data.endswith(b'\n'):
+                  raise SystemExit(f'Missing trailing newline: {file}')
+              if file.endswith('.yml'): raise SystemExit(f'Use .yaml: {file}')
+              if '_' in file and not re.search(r'PULL_REQUEST_TEMPLATE|ISSUE_TEMPLATE|\.(go|md|js|py|webp|png|jpe?g|gif|svg|ico|txt)$', file):
+                  raise SystemExit(f'Underscore in filename: {file}')
+          PY

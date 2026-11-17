@@ -23,7 +23,7 @@ spec:
       serviceAccountName: auth
       containers:
         - name: auth
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ .Values.image | quote }}
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

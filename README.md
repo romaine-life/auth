@@ -486,8 +486,8 @@ npm run dev
 ArgoCD renders the Helm chart in [k8s/](k8s/) (Application manifest lives in
 `infra-bootstrap/k8s/apps/auth.yaml`). The pipeline is:
 
-1. After server inputs change on `main`, [CI](.forgejo/workflows/ci.yaml) validates, builds and pushes the image to `romainecr`, then opens a checked PR updating `k8s/values.yaml`.
-2. After that image pin merges, ArgoCD rolls the Deployment. Client-only changes release the native clients without rebuilding the server image.
+1. CI comes from pipeline-templates' suites (its `fleet.json` entry). A merge that changes the server or the clients releases v0.1.N: the native clients (Windows signed), the Go module's tag, and the image, self-tested and pushed to `romainecr`; the release opens a checked PR updating `k8s/values.yaml`.
+2. After that image pin merges, ArgoCD rolls the Deployment.
 3. CNPG manages the Postgres cluster lifecycle alongside
 
 Cluster credentials come from CNPG's auto-generated `auth-db-app` Secret;

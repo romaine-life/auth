@@ -1,9 +1,6 @@
-# CI proposes image changes through a checked PR; ArgoCD renders templates/.
-image:
-  repository: romainecr.azurecr.io/auth
-  # The release version CI built the image as (v0.1.N). Quoted so YAML
-  # always reads a tag as a string; CI writes the quoted form.
-  tag: "v0.1.54"
+# Argo CD renders templates/. The image by release tag and digest, rewritten by the suite's
+# pin PR on each release.
+image: romainecr.azurecr.io/auth:v0.1.54@sha256:e4443ab3ae96fa3b071b2f9b4f1611dc4b2e149139dfa307d42693c4a8c116f2
 
 externalSecret:
   createStore: true
