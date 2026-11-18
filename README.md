@@ -75,7 +75,7 @@ tokens until their original 24-hour expiry.
 
 ## Stack
 
-- **Hono** on Node 20 (Web Standards request/response, portable to Bun / edge if we want it)
+- **Hono** on Node 22 (Web Standards request/response, portable to Bun / edge if we want it)
 - **Better Auth** for the OAuth/OIDC flow, session storage, custom user fields, and JWT issuance
 - **Drizzle** (postgres-js driver) against a **CloudNativePG** Postgres cluster running in this app's namespace
 - All secrets injected via env: DB creds come from CNPG's auto-managed `auth-db-app` Secret; OAuth client secrets and `BETTER_AUTH_SECRET` arrive via an ExternalSecret synced from the auth-owned `ng6-auth` Key Vault. The pod itself has no direct Azure dependencies
