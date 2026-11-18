@@ -1,8 +1,7 @@
-# Builds the programs this repository releases, as release.goTargets in
-# pipeline-templates' fleet.json defines them (PIPT-12). Build only: the release
-# suite keeps version numbering, upload, home-sync and pins; the ldflags stamp
-# the VERSION, GITHUB_REPOSITORY and GITHUB_SERVER_URL it sets, as its Go build
-# does.
+# The programs this repository releases: pipeline-templates' release suite runs
+# `goreleaser build` on this file (PIPT-31) and keeps version numbering, upload,
+# home-sync and pins itself; the ldflags stamp the VERSION, GITHUB_REPOSITORY and
+# GITHUB_SERVER_URL it sets.
 version: 2
 
 project_name: auth
