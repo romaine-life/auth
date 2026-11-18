@@ -1,0 +1,23 @@
+# Builds the programs this repository releases, as release.goTargets in
+# pipeline-templates' fleet.json defines them (PIPT-12). Build only: the release
+# suite keeps version numbering, upload, home-sync and pins; the ldflags stamp
+# the VERSION, GITHUB_REPOSITORY and GITHUB_SERVER_URL it sets, as its Go build
+# does.
+version: 2
+
+project_name: auth
+
+builds:
+  - id: romaine-auth
+    main: ./cmd/romaine-auth
+    binary: "romaine-auth-{{ .Os }}-{{ .Arch }}"
+    targets: [windows_amd64_v1, linux_amd64_v1, linux_arm64_v8.0, darwin_amd64_v1, darwin_arm64_v8.0]
+    no_unique_dist_dir: true
+    env: [CGO_ENABLED=0]
+    flags: [-p=4, -trimpath]
+    ldflags: >-
+      -s -w
+      {{ if isEnvSet "VERSION" }}-X main.version={{ .Env.VERSION }}{{ end }}
+      {{ if isEnvSet "GITHUB_REPOSITORY" }}-X main.buildRepo={{ .Env.GITHUB_REPOSITORY }}{{ end }}
+      {{ if isEnvSet "GITHUB_SERVER_URL" }}-X main.buildServer={{ .Env.GITHUB_SERVER_URL }}{{ end }}
+      -X main.buildTime={{ .Now.UTC.Format "2006-01-02T15:04:05.000Z" }}
