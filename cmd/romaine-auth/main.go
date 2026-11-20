@@ -32,12 +32,15 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, bao get|list|post|patch|delete PATH, or ssh --user USER HOST [COMMAND...]")
+		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, bao get|list|post|patch|delete PATH, ssh --user USER HOST [COMMAND...], or version")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	dir := client.ConfigDir()
 	switch args[0] {
+	case "version":
+		printVersion(os.Stdout)
+		return nil
 	case "ssh-host":
 		flags := flag.NewFlagSet("ssh-host", flag.ContinueOnError)
 		user := flags.String("user", "", "local OS login")
