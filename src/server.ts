@@ -4,13 +4,26 @@ import { cors } from "hono/cors";
 import { html, raw } from "hono/html";
 import { logger } from "hono/logger";
 import { setCookie, deleteCookie, getCookie } from "hono/cookie";
-import { and, eq, desc, isNull } from "drizzle-orm";
+import { and, eq, desc, gt, isNull, sql } from "drizzle-orm";
 import { auth, resolveAllTrustedOrigins } from "./auth.js";
 import { OAUTH_CLIENT_IDS, reconcileOAuthClients, type AuthWithAdapter } from "./oauth-clients.js";
 import { adminLoginRedirectPath } from "./admin-redirect.js";
 import { landingSignInRedirect, signedOAuthQuery } from "./oidc-login-provider.js";
 import { db } from "./db/client.js";
-import { account, cliDeviceGrant, device, session, user } from "./db/schema.js";
+import { account, azureAccessGrant, cliDeviceGrant, device, session, user } from "./db/schema.js";
+import {
+  AZURE_ACCESS_AUDIENCE,
+  AZURE_ACCESS_SCHEMA_SQL,
+  AZURE_ACCESS_SUBJECT,
+  AZURE_REQUEST_PENDING_SECONDS,
+  AZURE_WAIT_MAX_SECONDS,
+  AzureAccessError,
+  azureTokenTtlSeconds,
+  createDecisionSignal,
+  effectiveStatus,
+  machineFromClaims,
+  parseAzureAccessRequest,
+} from "./azure-access.js";
 import {
   appendCallbackParams,
   buildRequesterGuidance,
@@ -58,7 +71,7 @@ import {
 } from "./ssh-cert-exchange.js";
 import { parseUserEd25519PublicKey, SSH_CERT_SKEW_SECONDS } from "./ssh-cert.js";
 import { machineIdentity, machineTokenInput, machineRequestHash, machineSshPrincipal } from "./machine-helpers.js";
-import { mintAuthJwt } from "./mint-jwt.js";
+import { mintAuthJwt, mintFederationJwt } from "./mint-jwt.js";
 import {
   DEVICE_TOKEN_URL,
   DeviceError,
@@ -78,6 +91,7 @@ import {
   recordFederationExchange,
   recordSshCertExchange,
   recordDevice,
+  recordAzureAccess,
   registry,
 } from "./metrics.js";
 import {
@@ -745,12 +759,67 @@ if (process.env.TEST_MODE !== "true") {
         recordDevice("token", "success_ssh");
         return c.json({ certificate: signed.authorizedKeyLine, expires_at: signed.validBefore, subject: identity.id, principal });
       }
+      if (target?.audience === "azure") {
+        return await mintAzureAccessToken(c, identity.id, dev.name);
+      }
       const signed = await mintAuthJwt(machineTokenInput(u.id, dev.name, apps));
       console.warn("[/api/auth/device/token] minted:", JSON.stringify({ subject: identity.id, device: dev.name, role: "service", exp: signed.exp }));
       recordDevice("token", "success_machine");
       return c.json({ token: signed.token, expires_at: signed.exp, subject: identity.id });
     } catch (e) {
       return deviceErrorResponse(c, "token", e, attempt);
+    }
+  });
+
+  // ── Azure access on approval (src/azure-access.ts, AUT-9) ─────────────
+  // POST /api/azure-access/requests   Bearer: the machine's own token
+  //   body { reason, minutes? }  →  { id, status, approve_url, request_expires_at }
+  // GET  /api/azure-access/requests/:id?wait=N   Bearer: the same machine's token
+  //   →  { id, status, minutes, grant_expires_at, decided_by }; with wait (seconds, at most
+  //   AZURE_WAIT_MAX_SECONDS) a pending request is held open until it's decided or the wait
+  //   ends, so the machine hears of the decision the moment it's made.
+  // Errors are { error, reason }.
+  app.post("/api/azure-access/requests", async (c) => {
+    try {
+      const machine = await verifyMachineBearer(c);
+      const req = parseAzureAccessRequest(await readJsonObject(c).catch((e: Error) => {
+        throw new AzureAccessError("invalid_request", 400, e.message);
+      }));
+      const id = `aza_${randomUrlToken(12)}`;
+      const requestExpiresAt = new Date(Date.now() + AZURE_REQUEST_PENDING_SECONDS * 1000);
+      await db.insert(azureAccessGrant).values({
+        id, machineSubject: machine.subject, deviceName: machine.device,
+        reason: req.reason, minutes: req.minutes, requestExpiresAt,
+      });
+      console.warn("[azure-access] requested:", JSON.stringify({ id, device: machine.device, minutes: req.minutes, reason: req.reason }));
+      recordAzureAccess("request", "success");
+      return c.json({
+        id, status: "pending", minutes: req.minutes,
+        approve_url: `${ADMIN_BEARER_ISSUER}/azure-access/${id}`,
+        request_expires_at: Math.floor(requestExpiresAt.getTime() / 1000),
+      });
+    } catch (e) {
+      return azureAccessErrorResponse(c, "request", e);
+    }
+  });
+
+  app.get("/api/azure-access/requests/:id", async (c) => {
+    try {
+      const machine = await verifyMachineBearer(c);
+      const id = c.req.param("id");
+      const wait = Math.min(Math.max(Number(c.req.query("wait") ?? 0) || 0, 0), AZURE_WAIT_MAX_SECONDS);
+      let row = await findAzureGrant(id);
+      if (!row || row.machineSubject !== machine.subject) {
+        throw new AzureAccessError("not_found", 404, "no such request from this machine");
+      }
+      if (wait > 0 && effectiveStatus(row, new Date()) === "pending") {
+        await azureDecisions.wait(id, wait * 1000);
+        row = (await findAzureGrant(id)) ?? row;
+      }
+      recordAzureAccess("status", "success");
+      return c.json(azureGrantJson(row));
+    } catch (e) {
+      return azureAccessErrorResponse(c, "status", e);
     }
   });
 
@@ -777,6 +846,96 @@ function deviceErrorResponse(c: Context, action: "enroll" | "token", e: unknown,
   console.error(`[/api/auth/device/${action}] failed:`, JSON.stringify(attempt ?? {}), e);
   recordDevice(action, "internal");
   return c.json({ error: "internal error", reason: "internal" }, 500);
+}
+
+// Wakes a status request held open on an Azure access request when it's decided.
+const azureDecisions = createDecisionSignal();
+
+type AzureGrantRow = typeof azureAccessGrant.$inferSelect;
+
+async function findAzureGrant(id: string): Promise<AzureGrantRow | null> {
+  const rows = await db.select().from(azureAccessGrant).where(eq(azureAccessGrant.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+function azureGrantJson(row: AzureGrantRow) {
+  const toUnix = (d: Date | null) => (d ? Math.floor(d.getTime() / 1000) : null);
+  return {
+    id: row.id,
+    status: effectiveStatus(row, new Date()),
+    device: row.deviceName,
+    reason: row.reason,
+    minutes: row.minutes,
+    request_expires_at: toUnix(row.requestExpiresAt),
+    grant_expires_at: toUnix(row.grantExpiresAt),
+    decided_by: row.decidedByEmail,
+  };
+}
+
+// The caller's machine identity, from its own auth.romaine.life machine token; the machine
+// account must still be enabled (role service), as the device token exchange requires.
+async function verifyMachineBearer(c: Context): Promise<{ subject: string; device: string }> {
+  const header = c.req.header("Authorization") ?? "";
+  if (!header.startsWith("Bearer ")) throw new AzureAccessError("not_machine", 401, "a home machine's token is required");
+  let claims: Record<string, unknown>;
+  try {
+    const jwks = (await auth.api.getJwks()) as JSONWebKeySet;
+    ({ payload: claims } = await jwtVerify(header.slice("Bearer ".length).trim(), createLocalJWKSet(jwks), {
+      issuer: ADMIN_BEARER_ISSUER,
+    }));
+  } catch (e) {
+    throw new AzureAccessError("not_machine", 401, `token rejected: ${(e as Error).message}`);
+  }
+  const machine = machineFromClaims(claims);
+  const [row] = await db.select().from(user).where(eq(user.id, machine.subject)).limit(1);
+  if (!row || row.role !== "service") throw new AzureAccessError("not_machine", 403, "the machine account is disabled");
+  return machine;
+}
+
+function azureAccessErrorResponse(c: Context, action: "request" | "status" | "decide" | "token", e: unknown) {
+  if (e instanceof AzureAccessError) {
+    console.warn(`[azure-access] ${action} refused:`, JSON.stringify({ reason: e.reason, error: e.message }));
+    recordAzureAccess(action, e.reason);
+    return c.json({ error: e.message, reason: e.reason }, e.status);
+  }
+  console.error(`[azure-access] ${action} failed:`, e);
+  recordAzureAccess(action, "internal");
+  return c.json({ error: "internal error", reason: "internal" }, 500);
+}
+
+// The device token exchange with audience "azure": a federation JWT for the azure-access
+// identity, only while this machine holds an approved, unexpired, unrevoked grant.
+async function mintAzureAccessToken(c: Context, subject: string, deviceName: string) {
+  try {
+    const clientId = process.env.AZURE_ACCESS_CLIENT_ID ?? "";
+    const tenantId = process.env.AZURE_ACCESS_TENANT_ID ?? "";
+    if (!clientId || !tenantId) throw new AzureAccessError("not_configured", 503, "Azure access isn't configured on this server");
+    const now = new Date();
+    const [grant] = await db.select().from(azureAccessGrant).where(and(
+      eq(azureAccessGrant.machineSubject, subject),
+      eq(azureAccessGrant.status, "approved"),
+      isNull(azureAccessGrant.revokedAt),
+      gt(azureAccessGrant.grantExpiresAt, now),
+    )).orderBy(desc(azureAccessGrant.grantExpiresAt)).limit(1);
+    if (!grant || !grant.grantExpiresAt) {
+      throw new AzureAccessError("no_grant", 403, "this machine has no approved Azure access: request it with romaine-auth azure request");
+    }
+    const ttl = azureTokenTtlSeconds(grant.grantExpiresAt, now);
+    if (ttl <= 0) throw new AzureAccessError("no_grant", 403, "this machine's Azure access has ended");
+    const signed = await mintFederationJwt({ subject: AZURE_ACCESS_SUBJECT, audience: AZURE_ACCESS_AUDIENCE, ttlSeconds: ttl });
+    await db.update(azureAccessGrant).set({ lastTokenAt: now, tokenCount: sql`${azureAccessGrant.tokenCount} + 1` })
+      .where(eq(azureAccessGrant.id, grant.id));
+    console.warn("[azure-access] token:", JSON.stringify({ grant: grant.id, device: deviceName, exp: signed.exp }));
+    recordAzureAccess("token", "success");
+    recordDevice("token", "success_azure");
+    return c.json({
+      token: signed.token, expires_at: signed.exp, subject: AZURE_ACCESS_SUBJECT,
+      client_id: clientId, tenant_id: tenantId, grant_id: grant.id,
+      grant_expires_at: Math.floor(grant.grantExpiresAt.getTime() / 1000),
+    });
+  } catch (e) {
+    return azureAccessErrorResponse(c, "token", e);
+  }
 }
 
 // TEST_MODE flips every handler into fixture-data mode. Used by helm-issue
@@ -3488,6 +3647,122 @@ app.post("/api/cli/device", async (c) => {
   });
 });
 
+// ── Azure access approval page (src/azure-access.ts, AUT-9) ───────────────
+// GET  /azure-access/:id   an administrator reviews a machine's request
+// POST /azure-access/:id   form decision=approve|deny (pending) or revoke (approved, active)
+app.get("/azure-access/:id", async (c) => {
+  if (TEST_MODE) return c.text("Azure access is unavailable in test mode", 404);
+  const id = c.req.param("id");
+  const gate = await requireAdmin(c);
+  if ("status" in gate) {
+    if (gate.status === 403) return c.text("forbidden", 403);
+    return c.redirect(`/sign-in/microsoft?callbackURL=${encodeURIComponent(`/azure-access/${id}`)}`);
+  }
+  const row = await findAzureGrant(id);
+  if (!row) return c.html(azureAccessPage(null, "No Azure access request has that link."), 404);
+  return c.html(azureAccessPage(row, azureAccessMessage(row)));
+});
+
+app.post("/azure-access/:id", async (c) => {
+  if (TEST_MODE) return c.text("Azure access is unavailable in test mode", 404);
+  const gate = await requireAdmin(c);
+  if ("status" in gate) return c.text("forbidden", gate.status === 302 ? 401 : 403);
+  const id = c.req.param("id");
+  const form = await c.req.formData();
+  const decision = String(form.get("decision") ?? "");
+  const admin = gate.user as typeof gate.user & { email?: string };
+  const row = await findAzureGrant(id);
+  if (!row) return c.html(azureAccessPage(null, "No Azure access request has that link."), 404);
+  const now = new Date();
+  const status = effectiveStatus(row, now);
+  let updated: AzureGrantRow[] = [];
+  if ((decision === "approve" || decision === "deny") && status === "pending") {
+    updated = await db.update(azureAccessGrant).set(decision === "approve"
+      ? { status: "approved", decidedAt: now, decidedByEmail: admin.email ?? "",
+          grantExpiresAt: new Date(now.getTime() + row.minutes * 60 * 1000) }
+      : { status: "denied", decidedAt: now, decidedByEmail: admin.email ?? "" })
+      .where(and(eq(azureAccessGrant.id, id), eq(azureAccessGrant.status, "pending"))).returning();
+  } else if (decision === "revoke" && status === "approved") {
+    updated = await db.update(azureAccessGrant).set({ status: "revoked", revokedAt: now, decidedByEmail: admin.email ?? "" })
+      .where(and(eq(azureAccessGrant.id, id), eq(azureAccessGrant.status, "approved"))).returning();
+  } else if (!["approve", "deny", "revoke"].includes(decision)) {
+    return c.text("invalid decision", 400);
+  }
+  if (updated.length === 0) {
+    recordAzureAccess("decide", "conflict");
+    const latest = (await findAzureGrant(id)) ?? row;
+    return c.html(azureAccessPage(latest, `Nothing changed: ${azureAccessMessage(latest)}`), 409);
+  }
+  azureDecisions.notify(id);
+  console.warn("[azure-access] decided:", JSON.stringify({ id, decision, device: row.deviceName, administrator: admin.email }));
+  recordAzureAccess("decide", decision);
+  return c.html(azureAccessPage(updated[0], azureAccessMessage(updated[0])));
+});
+
+function azureAccessMessage(row: AzureGrantRow): string {
+  const status = effectiveStatus(row, new Date());
+  const until = row.grantExpiresAt ? `${row.grantExpiresAt.toISOString().slice(11, 16)} UTC` : "";
+  switch (status) {
+    case "pending": return `${row.deviceName} is asking for Azure access for ${row.minutes} minutes.`;
+    case "approved": return `Approved by ${row.decidedByEmail}: ${row.deviceName} has Azure access until ${until}.`;
+    case "denied": return `Denied by ${row.decidedByEmail}.`;
+    case "revoked": return `Revoked by ${row.decidedByEmail}: no new Azure sign-ins. One already made lasts until its token ends, within the hour.`;
+    default: return row.grantExpiresAt ? `This grant ended at ${until}.` : "This request expired without a decision.";
+  }
+}
+
+function azureAccessPage(row: AzureGrantRow | null, message: string) {
+  const status = row ? effectiveStatus(row, new Date()) : null;
+  return SHELL("Azure access - auth.romaine.life", html`
+    ${topbar("online")}
+    <main class="main">
+      <div class="vk-card">
+        <div class="iris-wrap">${IRIS}</div>
+        <h1>Azure access</h1>
+        <p class="subtitle">A home machine's request</p>
+        <p class="lede">${message}</p>
+        ${row ? html`
+          <div class="admin-card">
+            <div class="admin-grid">
+              <label>Machine</label>
+              <input readonly value="${row.deviceName}" />
+              <label>Reason</label>
+              <textarea readonly rows="4">${row.reason}</textarea>
+              <label>Duration</label>
+              <input readonly value="${row.minutes} minutes" />
+              <label>Status</label>
+              <input readonly value="${status}" />
+              <label>Access</label>
+              <input readonly value="the azure-access identity: Contributor, Key Vault secrets, Cosmos data and AKS" />
+            </div>
+          </div>
+        ` : html``}
+        ${row && status === "pending" ? html`
+          <form class="signin-stack" method="POST" action="/azure-access/${row.id}">
+            <button class="signin-btn" type="submit" name="decision" value="approve">
+              <span class="signin-label">Approve Azure access</span>
+              <span class="signin-meta">${row.minutes} min</span>
+            </button>
+            <button class="signin-btn" type="submit" name="decision" value="deny">
+              <span class="signin-label">Deny request</span>
+              <span class="signin-meta">cancel</span>
+            </button>
+          </form>
+        ` : html``}
+        ${row && status === "approved" ? html`
+          <form class="signin-stack" method="POST" action="/azure-access/${row.id}">
+            <button class="signin-btn" type="submit" name="decision" value="revoke">
+              <span class="signin-label">Revoke now</span>
+              <span class="signin-meta">ends new sign-ins</span>
+            </button>
+          </form>
+        ` : html``}
+      </div>
+    </main>
+    ${footer()}
+  `);
+}
+
 app.get("/cli", async (c) => {
   const rawUserCode = c.req.query("user_code") ?? "";
   const userCode = rawUserCode.trim();
@@ -3929,6 +4204,9 @@ async function start(): Promise<void> {
     // AuthWithAdapter.
     await reconcileOAuthClients(auth as unknown as AuthWithAdapter);
     console.log(`oauth clients reconciled: ${OAUTH_CLIENT_IDS.join(", ")}`);
+    // Azure access requests (src/azure-access.ts): the table is created if missing.
+    await db.execute(sql.raw(AZURE_ACCESS_SCHEMA_SQL));
+    console.log("azure access schema ready");
   }
   serve({ fetch: app.fetch, port }, (info) => {
     console.log(`auth listening on :${info.port}`);

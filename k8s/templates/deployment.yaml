@@ -113,6 +113,12 @@ spec:
             # (/api/admin/origins/*). Inbound auth: k8s SA tokens signed by
             # the cluster OIDC issuer below, with audience = this service.
             # See romaine-life/glimmung#142.
+            # Azure access on approval (src/azure-access.ts): the identity an approved
+            # machine signs in as. Empty, the azure token exchange refuses as not configured.
+            - name: AZURE_ACCESS_CLIENT_ID
+              value: {{ .Values.azureAccess.clientId | quote }}
+            - name: AZURE_ACCESS_TENANT_ID
+              value: {{ .Values.azureAccess.tenantId | quote }}
             - name: K8S_OIDC_ISSUER
               value: {{ .Values.k8sOidc.issuer | quote }}
             - name: K8S_ADMIN_AUDIENCE

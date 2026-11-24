@@ -236,3 +236,22 @@ export const device = pgTable("device", {
   lastUsedAt: timestamp("last_used_at"),
   revokedAt: timestamp("revoked_at"),
 });
+
+// Azure access requests and grants (src/azure-access.ts, AUT-9). Created at startup by
+// AZURE_ACCESS_SCHEMA_SQL; every row is kept as the audit record.
+export const azureAccessGrant = pgTable("azure_access_grant", {
+  id: text("id").primaryKey(),
+  machineSubject: text("machine_subject").notNull(),
+  deviceName: text("device_name").notNull(),
+  reason: text("reason").notNull(),
+  minutes: integer("minutes").notNull(),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  requestExpiresAt: timestamp("request_expires_at").notNull(),
+  decidedAt: timestamp("decided_at"),
+  decidedByEmail: text("decided_by_email"),
+  grantExpiresAt: timestamp("grant_expires_at"),
+  revokedAt: timestamp("revoked_at"),
+  lastTokenAt: timestamp("last_token_at"),
+  tokenCount: integer("token_count").notNull().default(0),
+});

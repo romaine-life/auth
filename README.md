@@ -295,6 +295,48 @@ approval surface for test-slot model/effort elevation: auth authenticates the
 admin, mints a short-lived service JWT server-side, calls Tank's slot grant
 endpoint, and returns only the grant status to the browser.
 
+## Azure access on approval
+
+A home machine gets Azure access by asking for it and having an administrator approve it,
+as tank-operator sessions did with `request_azure_break_glass` (AUT-9). No one's personal
+Azure sign-in is involved.
+
+```sh
+romaine-auth azure request --reason "read infra-aks's Argo CD and pods" --minutes 60
+```
+
+1. The machine files the request with its own machine token
+   (`POST /api/azure-access/requests`, `{reason, minutes}`; 15 to 480 minutes, 60 by default)
+   and prints the approval link, `https://auth.romaine.life/azure-access/<id>`.
+2. An administrator opens the link, signed in, and approves or denies. An undecided request
+   lapses after 30 minutes.
+3. The machine waits on `GET /api/azure-access/requests/<id>?wait=10`, which auth holds open
+   until the decision lands (at most 10 seconds a call, under the gateway's 15-second limit).
+4. Approved, the machine asks its device-token exchange for audience `azure`. While the grant
+   lasts, auth signs a federation token (iss `https://auth.romaine.life`, aud
+   `api://AzureADTokenExchange`, sub `azure-access:approved-grant`, at most 10 minutes and never
+   past the grant), with the identity's client and tenant ids.
+5. `az login --service-principal --federated-token` turns it into Azure access as the
+   `azure-access` user-assigned managed identity, whose federated credential trusts exactly
+   that issuer and subject (romaine-life/infra-bootstrap `tofu/azure-access.tf`). Azure's access
+   token lasts about an hour; `romaine-auth azure login` signs in again while the grant lasts.
+
+The identity holds what mcp-azure-personal held: Contributor, Cost Management Reader and Key
+Vault Secrets Officer on the workload subscription, Key Vault Secrets Officer on the cluster
+subscription, data access to `infra-cosmos-serverless`, and the AKS Contributor and Cluster
+User roles on `infra-aks`.
+
+**Revoking.** The approval page of an active grant has **Revoke now**: auth signs no more
+tokens for it. An Azure sign-in already made keeps its access token until that ends, within
+the hour.
+
+**Record.** Every request and decision is a row in `azure_access_grant` (created at startup),
+logged as `[azure-access]` lines, and counted in `auth_azure_access_total{action,result}`.
+
+**Configuration.** `azureAccess.clientId` and `azureAccess.tenantId` in `k8s/values.yaml` are
+infra-bootstrap's tofu outputs `azure_access_client_id` and `azure_access_tenant_id`. Empty,
+the `azure` exchange refuses with `not_configured`.
+
 ## CLI-approved bot-token flow
 
 `/api/cli/device` is the safer CLI path for agents like Codex. The local client

@@ -226,3 +226,10 @@ k8sOidc:
   # failed and blocked auth from syncing. Re-add a namespace when its consumer
   # comes back online (and add a matching route in src/service-consumers.ts).
   serviceConsumerNamespaces: []
+
+# Azure access on approval (src/azure-access.ts, AUT-9): the azure-access user-assigned
+# managed identity a machine signs in as while it holds an approved grant. Both are
+# romaine-life/infra-bootstrap tofu outputs: azure_access_client_id, azure_access_tenant_id.
+azureAccess:
+  clientId: ff177da0-f6ff-4721-b2d8-f01e3116151d
+  tenantId: 2236b5e4-81d2-4d82-bde5-17b1037999ea

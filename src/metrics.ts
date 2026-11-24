@@ -190,3 +190,16 @@ const authDeviceTotal = new Counter({
 export function recordDevice(action: "enroll" | "token" | "revoke", result: string): void {
   authDeviceTotal.labels(action, result).inc();
 }
+
+// Azure access on approval (src/azure-access.ts, AUT-9): requests filed, decisions made and
+// federation tokens minted, by outcome, so a refused or failing step shows up.
+const authAzureAccessTotal = new Counter({
+  name: "auth_azure_access_total",
+  help: "Azure access requests, decisions and token mints, labeled by action and outcome.",
+  labelNames: ["action", "result"] as const,
+  registers: [registry],
+});
+
+export function recordAzureAccess(action: "request" | "status" | "decide" | "token", result: string): void {
+  authAzureAccessTotal.labels(action, result).inc();
+}

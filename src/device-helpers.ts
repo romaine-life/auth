@@ -22,6 +22,8 @@ export const ENROLL_MAX_TOKEN_AGE_SECONDS = 10 * 60;
 export const DEVICE_AUDIENCES: Record<string, { ttlSeconds: number }> = {
   machine: { ttlSeconds: 15 * 60 },
   ssh: { ttlSeconds: 10 * 60 },
+  // Azure workload identity federation while an approved grant lasts (src/azure-access.ts).
+  azure: { ttlSeconds: 10 * 60 },
 };
 
 /** Device names: what the machine is called at home (nelsonpc, treadmill, nas). */

@@ -225,13 +225,19 @@ func signAssertion(reg Registration, s signer, fields map[string]string) (string
 }
 func Exchange(ctx context.Context, fields map[string]string) (Credentials, error) {
 	var result Credentials
+	e := exchangeInto(ctx, fields, &result)
+	return result, e
+}
+
+// exchangeInto signs an assertion for the fields and decodes auth's answer into result.
+func exchangeInto(ctx context.Context, fields map[string]string, result any) error {
 	reg, e := machineRegistration()
 	if e != nil {
-		return result, e
+		return e
 	}
 	s, e := machineKey(false)
 	if e != nil {
-		return result, &AuthError{Kind: "key", Detail: "the machine key is unavailable or locked"}
+		return &AuthError{Kind: "key", Detail: "the machine key is unavailable or locked"}
 	}
 	defer s.Close()
 	if fields == nil {
@@ -243,17 +249,16 @@ func Exchange(ctx context.Context, fields map[string]string) (Credentials, error
 	}
 	assertion, e := signAssertion(reg, s, fields)
 	if e != nil {
-		return result, e
+		return e
 	}
 	body := map[string]string{"assertion": assertion}
 	for k, v := range fields {
 		if k == "assertion" {
-			return result, errors.New("invalid exchange field")
+			return errors.New("invalid exchange field")
 		}
 		body[k] = v
 	}
-	e = post(ctx, TokenURL, body, "", &result)
-	return result, e
+	return post(ctx, TokenURL, body, "", result)
 }
 func cloneFields(fields map[string]string) map[string]string {
 	copy := make(map[string]string, len(fields)+1)
