@@ -49,12 +49,13 @@ func run(args []string) error {
 		check := flags.Bool("check", false, "change nothing: print current, or each part of the host trust that differs")
 		installed := flags.Bool("installed", false, "change nothing: print each OS login with installed machine trust, or none")
 		remove := flags.Bool("remove", false, "remove the login's machine trust; the last login's removal also removes the CA key and sshd_config block")
+		host := flags.String("host", "", "another name callers reach this host by, accepted in principals beside its own")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		usage := errors.New("ssh-host --user USER --principals FILE [--check | --user-scope], ssh-host --user USER --remove, or ssh-host --installed")
+		usage := errors.New("ssh-host --user USER --principals FILE [--host NAME] [--check | --user-scope], ssh-host --user USER --remove, or ssh-host --installed")
 		if *installed {
-			if *user != "" || *file != "" || *check || *userScope || *remove {
+			if *user != "" || *file != "" || *check || *userScope || *remove || *host != "" {
 				return usage
 			}
 			logins, err := client.InstalledSSHHostLogins()
@@ -68,20 +69,24 @@ func run(args []string) error {
 			return nil
 		}
 		if *remove {
-			if *user == "" || *file != "" || *check || *userScope {
+			if *user == "" || *file != "" || *check || *userScope || *host != "" {
 				return usage
 			}
 			return client.RemoveSSHHostTrust(ctx, *user)
 		}
-		if *file == "" || *user == "" || (*check && *userScope) {
+		if *file == "" || *user == "" || (*check && *userScope) || (*host != "" && *userScope) {
 			return usage
+		}
+		var names []string
+		if *host != "" {
+			names = []string{*host}
 		}
 		data, err := os.ReadFile(*file)
 		if err != nil {
 			return err
 		}
 		if *check {
-			differences, err := client.SSHHostTrustDifferences(ctx, *user, strings.Fields(string(data)))
+			differences, err := client.SSHHostTrustDifferences(ctx, *user, strings.Fields(string(data)), names...)
 			if err != nil {
 				return err
 			}
@@ -94,7 +99,7 @@ func run(args []string) error {
 		if *userScope {
 			return client.InstallSSHUserTrust(ctx, *user, strings.Fields(string(data)))
 		}
-		return client.InstallSSHHostTrust(ctx, *user, strings.Fields(string(data)))
+		return client.InstallSSHHostTrust(ctx, *user, strings.Fields(string(data)), names...)
 	case "grant":
 		if len(args) != 3 {
 			return errors.New("grant MACHINE-SUBJECT APPS-JSON-FILE")

@@ -54,17 +54,34 @@ func SSHConfig(original, root string) (string, error) {
 	return trustStart + "\nTrustedUserCAKeys \"" + path + "/romaine-ca.pub\"\nAuthorizedPrincipalsFile \"" + path + "/romaine-principals/%u\"\n" + trustEnd + "\n" + body, nil
 }
 
-func validateSSHPrincipals(user string, principals []string, hostname string) error {
+var hostNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,252}$`)
+
+// validateSSHPrincipals checks each principal is for this login and names this host:
+// its full, short or .local name, or a name the caller gives it (--host), such as the
+// home PC name callers reach a PC by when Windows calls it something else (ATR-2).
+func validateSSHPrincipals(user string, principals []string, hostname string, names ...string) error {
 	if !loginPattern.MatchString(user) || len(principals) == 0 {
 		return errors.New("an OS user and explicit machine principals are required")
 	}
 	hostname = strings.ToLower(hostname)
 	shortname := strings.Split(hostname, ".")[0]
+	hosts := []string{hostname, shortname, shortname + ".local"}
+	for _, name := range names {
+		name = strings.ToLower(name)
+		if !hostNamePattern.MatchString(name) {
+			return errors.New("invalid host name")
+		}
+		hosts = append(hosts, name)
+	}
 	for _, p := range principals {
 		if !regexp.MustCompile(`^device:[A-Za-z0-9_-]+/[a-z0-9-]+@[a-z0-9.-]+/[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$`).MatchString(p) || !strings.HasSuffix(p, "/"+user) {
 			return errors.New("invalid or mismatched SSH principal")
 		}
-		if !strings.Contains(p, "@"+hostname+"/") && !strings.Contains(p, "@"+shortname+"/") && !strings.Contains(p, "@"+shortname+".local/") {
+		named := false
+		for _, h := range hosts {
+			named = named || strings.Contains(p, "@"+h+"/")
+		}
+		if !named {
 			return errors.New("SSH principal names another host")
 		}
 	}
@@ -119,7 +136,7 @@ type hostTrust struct {
 	ca, principals   []byte
 }
 
-func wantedHostTrust(ctx context.Context, user string, principals []string) (*hostTrust, error) {
+func wantedHostTrust(ctx context.Context, user string, principals []string, names ...string) (*hostTrust, error) {
 	if err := requireHostAdmin(); err != nil {
 		return nil, err
 	}
@@ -127,7 +144,7 @@ func wantedHostTrust(ctx context.Context, user string, principals []string) (*ho
 	if err != nil {
 		return nil, err
 	}
-	if err := validateSSHPrincipals(user, principals, hostname); err != nil {
+	if err := validateSSHPrincipals(user, principals, hostname, names...); err != nil {
 		return nil, err
 	}
 	t := &hostTrust{user: hostLogin(user), principals: []byte(strings.Join(principals, "\n") + "\n")}
@@ -166,8 +183,8 @@ func (t *hostTrust) differences() []string {
 // SSHHostTrustDifferences reads the installed host trust for an OS login and
 // names each part InstallSSHHostTrust would change; none means it is current.
 // Like the install, it requires host administrator privileges.
-func SSHHostTrustDifferences(ctx context.Context, user string, principals []string) ([]string, error) {
-	t, err := wantedHostTrust(ctx, user, principals)
+func SSHHostTrustDifferences(ctx context.Context, user string, principals []string, names ...string) ([]string, error) {
+	t, err := wantedHostTrust(ctx, user, principals, names...)
 	if err != nil {
 		return nil, err
 	}
@@ -176,8 +193,8 @@ func SSHHostTrustDifferences(ctx context.Context, user string, principals []stri
 
 // InstallSSHHostTrust requires host administrator privileges. Only explicit
 // target-qualified machine principals are installed for the given OS login.
-func InstallSSHHostTrust(ctx context.Context, user string, principals []string) error {
-	t, err := wantedHostTrust(ctx, user, principals)
+func InstallSSHHostTrust(ctx context.Context, user string, principals []string, names ...string) error {
+	t, err := wantedHostTrust(ctx, user, principals, names...)
 	if err != nil {
 		return err
 	}

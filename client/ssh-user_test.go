@@ -79,3 +79,21 @@ func TestAccountTrustWritesAtomicallyAndRefusesSymlinks(t *testing.T) {
 		t.Fatal("modified symlink target")
 	}
 }
+
+// A home PC Windows names otherwise (treadmill is DESKTOP-RRTRPMT) accepts principals for
+// the name callers reach it by when that name is given, and only then (ATR-2).
+func TestHostPrincipalsAcceptTheGivenHostName(t *testing.T) {
+	principal := "device:owner/nelsonpc@treadmill/nelsontreadmill"
+	if validateSSHPrincipals("nelsontreadmill", []string{principal}, "DESKTOP-RRTRPMT") == nil {
+		t.Fatal("accepted a principal for another host")
+	}
+	if err := validateSSHPrincipals("nelsontreadmill", []string{principal}, "DESKTOP-RRTRPMT", "Treadmill"); err != nil {
+		t.Fatal(err)
+	}
+	if validateSSHPrincipals("nelsontreadmill", []string{"device:owner/nelsonpc@upstairspc/nelsontreadmill"}, "DESKTOP-RRTRPMT", "treadmill") == nil {
+		t.Fatal("the given name let in a principal for a third host")
+	}
+	if validateSSHPrincipals("nelsontreadmill", []string{principal}, "DESKTOP-RRTRPMT", "tread mill") == nil {
+		t.Fatal("accepted an invalid host name")
+	}
+}
