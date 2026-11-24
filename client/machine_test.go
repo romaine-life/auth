@@ -187,3 +187,27 @@ func TestLivePlatformKey(t *testing.T) {
 		t.Fatal("live platform key signature does not verify")
 	}
 }
+
+// glimmung's retired hand-placed trust, as nelsonlaptop's sshd_config has it, is removed
+// and the managed block installed; another CA, or one at another path, still stops it (ATR-2).
+func TestSSHConfigRemovesGlimmungsRetiredTrust(t *testing.T) {
+	keep := "Match Group administrators\r\n       AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys\r\n"
+	original := keep + "# auth.romaine.life is the sole SSH CA issuer (glimmung remote-host execution)\r\n" +
+		`TrustedUserCAKeys C:\ProgramData\ssh\auth-ca.pub` + "\r\n" +
+		`AuthorizedPrincipalsFile C:\ProgramData\ssh\auth_principals\%u` + "\r\n"
+	config, err := SSHConfig(original, `C:\ProgramData\ssh`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(config, "auth-ca.pub") || strings.Contains(config, "auth_principals") || strings.Contains(config, "glimmung") {
+		t.Fatal(config)
+	}
+	if !strings.HasSuffix(config, strings.ReplaceAll(keep, "\r\n", "\n")) || !strings.HasPrefix(config, trustStart) {
+		t.Fatal(config)
+	}
+	for _, other := range []string{`TrustedUserCAKeys C:\elsewhere\auth-ca.pub`, `AuthorizedPrincipalsFile C:\ProgramData\ssh\auth_principals\other`} {
+		if _, err := SSHConfig(other, `C:\ProgramData\ssh`); err == nil {
+			t.Fatalf("removed %q", other)
+		}
+	}
+}

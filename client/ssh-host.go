@@ -36,11 +36,42 @@ func withoutTrustBlock(original string) (string, error) {
 	return body, nil
 }
 
+// retiredGlimmungTrust is the hand-placed trust glimmung's remote-run harness used, which
+// SpireLens dropped (SPIRELENS-101): its comment and two directives, naming auth-ca.pub
+// and auth_principals\%u in sshd's own directory. It is removed rather than reconciled
+// (ATR-2); anything else naming a CA or principals still stops the install.
+func retiredGlimmungTrust(line, root string) bool {
+	line = strings.TrimSpace(line)
+	if line == "# auth.romaine.life is the sole SSH CA issuer (glimmung remote-host execution)" {
+		return true
+	}
+	words := strings.Fields(line)
+	if len(words) != 2 {
+		return false
+	}
+	path := strings.ToLower(strings.ReplaceAll(strings.Trim(words[1], `"`), `\`, "/"))
+	dir := strings.ToLower(strings.ReplaceAll(root, `\`, "/")) + "/"
+	return (strings.EqualFold(words[0], "TrustedUserCAKeys") && path == dir+"auth-ca.pub") ||
+		(strings.EqualFold(words[0], "AuthorizedPrincipalsFile") && path == dir+"auth_principals/%u")
+}
+
+func withoutRetiredTrust(body, root string) string {
+	lines := strings.Split(body, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if !retiredGlimmungTrust(line, root) {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
 func SSHConfig(original, root string) (string, error) {
 	body, err := withoutTrustBlock(original)
 	if err != nil {
 		return "", err
 	}
+	body = withoutRetiredTrust(body, root)
 	for _, line := range strings.Split(body, "\n") {
 		words := strings.Fields(line)
 		if len(words) == 0 {
@@ -220,7 +251,14 @@ func InstallSSHHostTrust(ctx context.Context, user string, principals []string, 
 			return err
 		}
 	}
-	return applySSHConfig(ctx, t.sshd, path, t.original, t.config)
+	if err = applySSHConfig(ctx, t.sshd, path, t.original, t.config); err != nil {
+		return err
+	}
+	// The retired trust's files go once sshd no longer names them.
+	if err = os.Remove(filepath.Join(t.root, "auth-ca.pub")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(t.root, "auth_principals"))
 }
 
 // InstalledSSHHostLogins names each OS login that has installed machine
