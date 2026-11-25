@@ -32,7 +32,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, bao get|list|post|patch|delete PATH, ssh --user USER HOST [COMMAND...], azure request --reason TEXT [--minutes N] | azure login, or version")
+		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, bao get|list|post|patch|delete PATH, ssh --user USER HOST [COMMAND...], azure request --reason TEXT [--minutes N] | azure login, tailnet join [--force], or version")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -175,6 +175,21 @@ func run(args []string) error {
 			return errors.New("exchange returned no token")
 		}
 		return client.Save(*out, result)
+	case "tailnet":
+		flags := flag.NewFlagSet("tailnet", flag.ContinueOnError)
+		force := flags.Bool("force", false, "sign in again even when the node is running")
+		if len(args) < 2 || args[1] != "join" {
+			return errors.New("tailnet join [--force]")
+		}
+		if err := flags.Parse(args[2:]); err != nil {
+			return err
+		}
+		msg, err := client.JoinTailnet(ctx, *force)
+		if err != nil {
+			return err
+		}
+		fmt.Println(msg)
+		return nil
 	case "azure":
 		return runAzure(ctx, args[1:])
 	case "home-token":

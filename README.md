@@ -60,7 +60,7 @@ OS logins containing `@`, such as a macOS directory account, are accepted litera
 `POST /api/auth/device/token` requires an explicit audience: `machine` for first-party credentials, or `audience=ssh` with `public_key`, `target` and
 `user`, returning a certificate lasting at most ten minutes. It requires `request_hash`,
 the hexadecimal SHA-256 of sorted-key JSON containing the request fields other than
-`assertion`.
+`assertion`. `audience=tailscale` returns a five-minute federation token, subject `machine:<device name>`, for the romaine.life tailnet's trust credential (the one exact `api.tailscale.com/...` entry in `FEDERATION_AUDIENCE_ALLOWLIST`): the machine trades it at Tailscale for a tagged, pre-approved join, so a home PC rejoins the tailnet with no browser sign-in and no stored key (AUT-10).
 
 auth has no OpenProject audience: OpenProject answers at home only, so
 `romaine-auth token --audience openproject` and `romaine-auth op` read the machine's own
@@ -336,6 +336,17 @@ logged as `[azure-access]` lines, and counted in `auth_azure_access_total{action
 **Configuration.** `azureAccess.clientId` and `azureAccess.tenantId` in `k8s/values.yaml` are
 infra-bootstrap's tofu outputs `azure_access_client_id` and `azure_access_tenant_id`. Empty,
 the `azure` exchange refuses with `not_configured`.
+
+## Rejoining the tailnet (AUT-10)
+
+`romaine-auth tailnet join` puts a home machine back on the tailnet with no browser sign-in
+and no stored key. The machine asks its device-token exchange for audience `tailscale`, a
+five-minute federation token with subject `machine:<device name>` for the tailnet's trust
+credential; Tailscale trades it for a short-lived API token, which mints a one-use,
+pre-approved key carrying the node's own advertised tags; `tailscale up` joins with it,
+restating the node's prefs. A tagged node joined by key has no key expiry. A running node is
+left alone unless `--force`. Tailscale's trust credential decides which subjects and tags it
+accepts.
 
 ## CLI-approved bot-token flow
 

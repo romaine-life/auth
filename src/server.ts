@@ -62,6 +62,7 @@ import {
 import {
   exchangeFederationToken,
   FederationExchangeError,
+  federationAudienceAllowlist,
 } from "./federation-exchange.js";
 import {
   exchangeSshCert,
@@ -78,7 +79,9 @@ import {
   checkEnrollToken,
   createJtiStore,
   parseEnrollRequest,
+  machineTailnetSubject,
   resolveAudience,
+  tailscaleAudience,
   verifyDeviceAssertion,
 } from "./device-helpers.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
@@ -761,6 +764,15 @@ if (process.env.TEST_MODE !== "true") {
       }
       if (target?.audience === "azure") {
         return await mintAzureAccessToken(c, identity.id, dev.name);
+      }
+      if (target?.audience === "tailscale") {
+        const audience = tailscaleAudience(federationAudienceAllowlist());
+        if (!audience) throw new DeviceError("audience_not_allowed", 403, "Tailscale federation isn't configured on this server");
+        const subject = machineTailnetSubject(dev.name);
+        const signed = await mintFederationJwt({ subject, audience, ttlSeconds: target.ttlSeconds });
+        console.warn("[/api/auth/device/token] tailscale federation:", JSON.stringify({ subject, device: dev.name, exp: signed.exp }));
+        recordDevice("token", "success_tailscale");
+        return c.json({ token: signed.token, expires_at: signed.exp, subject, audience });
       }
       const signed = await mintAuthJwt(machineTokenInput(u.id, dev.name, apps));
       console.warn("[/api/auth/device/token] minted:", JSON.stringify({ subject: identity.id, device: dev.name, role: "service", exp: signed.exp }));

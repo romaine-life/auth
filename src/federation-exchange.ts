@@ -109,6 +109,11 @@ function getAudience(): string {
   return (process.env.K8S_FEDERATION_AUDIENCE ?? DEFAULT_FEDERATION_AUDIENCE).trim();
 }
 
+/** The external audiences a federation token may carry, as configured. */
+export function federationAudienceAllowlist(): string[] {
+  return getAudienceAllowlist();
+}
+
 /** Test-only: clear cached env-derived state so a test can reset. */
 export function _resetFederationExchangeCache(): void {
   cachedSaAllowlist = null;

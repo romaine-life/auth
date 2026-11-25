@@ -9,7 +9,9 @@ import {
   createJtiStore,
   deviceSubject,
   parseEnrollRequest,
+  machineTailnetSubject,
   resolveAudience,
+  tailscaleAudience,
   verifyDeviceAssertion,
   type StoredDevice,
 } from "./device-helpers.js";
@@ -102,4 +104,21 @@ test("only declared audiences, and the subject names the user and the device", (
   assert.throws(() => resolveAudience("toString"));
   assert.throws(() => resolveAudience("https://api.github.com"));
   assert.equal(deviceSubject("u_1", "treadmill"), "device:u_1/treadmill");
+});
+
+test("tailscale is an audience a device can ask for, briefly", () => {
+  assert.deepEqual(resolveAudience("tailscale"), { audience: "tailscale", ttlSeconds: 300 });
+});
+
+test("a machine's Tailscale subject names it", () => {
+  assert.equal(machineTailnetSubject("nelsonlaptop"), "machine:nelsonlaptop");
+});
+
+test("only the one exact Tailscale audience is used", () => {
+  const id = "api.tailscale.com/T6vFBk1dAa11CNTRL-kf6kJRvG5T11CNTRL";
+  assert.equal(tailscaleAudience([id]), id);
+  assert.equal(tailscaleAudience(["api.tailscale.com/*"]), null);
+  assert.equal(tailscaleAudience(["https://other.example", id]), id);
+  assert.equal(tailscaleAudience([]), null);
+  assert.equal(tailscaleAudience([id, "api.tailscale.com/other"]), null);
 });

@@ -24,7 +24,25 @@ export const DEVICE_AUDIENCES: Record<string, { ttlSeconds: number }> = {
   ssh: { ttlSeconds: 10 * 60 },
   // Azure workload identity federation while an approved grant lasts (src/azure-access.ts).
   azure: { ttlSeconds: 10 * 60 },
+  // Tailscale workload identity federation: the machine trades this for a tagged,
+  // pre-approved join of its own, so a home PC rejoins the tailnet with no browser
+  // sign-in and no stored key (AUT-10).
+  tailscale: { ttlSeconds: 5 * 60 },
 };
+
+/** The subject a machine's Tailscale federation token carries: what Tailscale's trust
+ *  credential matches (machine:*) and which tags it lets the machine join with. */
+export function machineTailnetSubject(deviceName: string): string {
+  return `machine:${deviceName}`;
+}
+
+/** The one exact Tailscale audience in the federation allowlist: the romaine.life
+ *  tailnet's trust credential. A wildcard entry never counts, so a machine can't name
+ *  another tailnet's. */
+export function tailscaleAudience(allowlist: string[]): string | null {
+  const exact = allowlist.filter((a) => a.startsWith("api.tailscale.com/") && !a.includes("*"));
+  return exact.length === 1 ? exact[0] : null;
+}
 
 /** Device names: what the machine is called at home (nelsonpc, treadmill, nas). */
 const NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
