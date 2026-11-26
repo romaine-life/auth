@@ -12,6 +12,7 @@
 // image's clients.
 
 import { createHash } from "node:crypto";
+import { log } from "./log.js";
 
 /**
  * How a client secret is stored.
@@ -263,11 +264,11 @@ export async function reconcileOAuthClients(
         // the one ADR-0576 makes on the Chess Tactics side, and removable once every secret ships.
         confidential = false;
         if (!testMode) {
-          console.error(
-            `[oauth-clients] ${client.clientId} is declared confidential but ${client.secretEnv} `
-            + "is unset; registering it PUBLIC for now. Provision the secret and restart to "
-            + "complete the upgrade.",
-          );
+          log.error("oauth client registered public: its secret is unset", {
+            client: client.clientId,
+            secret_env: client.secretEnv,
+            fix: "provision the secret and restart",
+          });
         }
       }
     }

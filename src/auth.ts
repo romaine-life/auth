@@ -6,6 +6,7 @@ import { db } from "./db/client.js";
 import { eq } from "drizzle-orm";
 import { user as userTable } from "./db/schema.js";
 import { getManagedOrigins } from "./managed-origins.js";
+import { betterAuthLogger } from "./log.js";
 import { isReservedServiceEmail } from "./synthetic-email.js";
 import { OAUTH_CLIENT_IDS, hashClientSecret } from "./oauth-clients.js";
 
@@ -99,6 +100,8 @@ export const auth = betterAuth({
   baseURL: baseUrl,
   secret: process.env.BETTER_AUTH_SECRET ?? (TEST_MODE ? TEST_PLACEHOLDER : undefined),
   database: drizzleAdapter(db, { provider: "pg" }),
+  // Its lines as the estate's log line (src/log.ts).
+  logger: betterAuthLogger,
 
   trustedOrigins: resolveAllTrustedOrigins,
 

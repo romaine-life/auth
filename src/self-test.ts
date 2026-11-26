@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { errorText, log } from "./log.js";
 
 // The image's self-test: the built server's whole module graph loads in TEST_MODE (no database,
 // no secrets), answers /health, and the image runs as the nodejs user (uid 1001), which owns
@@ -32,8 +33,8 @@ try {
     const foreign = foreignOwned("/app", 1001);
     if (foreign) throw new Error(`${foreign} isn't owned by nodejs`);
   }
-  console.log("auth self-test passed");
+  log.info("auth self-test passed");
 } catch (error) {
-  console.error("auth self-test failed:", error);
+  log.error("auth self-test failed", { error: errorText(error) });
   process.exitCode = 1;
 }

@@ -74,7 +74,7 @@ export function recordAdminOrigins(method: string, result: AdminOriginsResultLab
 // JWT they can paste into an Authorization: Bearer call (e.g. for
 // salvaging a tank-operator session when the UI is broken). Single
 // counter (label-free) — this is rare-event telemetry, and a per-mint
-// `console.warn` carries the caller email for audit. A spike here
+// `log` line carries the caller email for audit. A spike here
 // outside expected admin debugging windows is itself the signal.
 export const authAdminBotTokensMintedTotal = new Counter({
   name: "auth_admin_bot_tokens_minted_total",
@@ -95,7 +95,7 @@ export function recordAdminBotTokenMint(): void {
 // "human debugging the apps"; a service-token spike is "human reaching
 // past the service-exchange surface to call an MCP from a workstation."
 // Same label-free, rare-event posture — per-mint identity lives in the
-// structured `console.warn` line.
+// structured `log` line (src/log.ts).
 export const authAdminServiceTokensMintedTotal = new Counter({
   name: "auth_admin_service_tokens_minted_total",
   help: "Service tokens minted via /admin/service-tokens (24h, role=service, purpose=bot, actor_email=<admin>).",

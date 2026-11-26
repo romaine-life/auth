@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { html, raw } from "hono/html";
-import { logger } from "hono/logger";
+import { errorText, log, outside, requestLog } from "./log.js";
 import { setCookie, deleteCookie, getCookie } from "hono/cookie";
 import { and, eq, desc, gt, isNull, sql } from "drizzle-orm";
 import { auth, resolveAllTrustedOrigins } from "./auth.js";
@@ -125,7 +125,7 @@ async function corsOriginMatcher(origin: string): Promise<string | null> {
 }
 
 const app = new Hono();
-app.use("*", logger());
+app.use("*", requestLog());
 
 // Apply CORS only to the Better Auth surface — the dashboard at "/" is a
 // same-origin HTML page and doesn't need ACA headers, and limiting scope
@@ -323,16 +323,14 @@ if (process.env.TEST_MODE !== "true") {
         // fixes), and it survives only in e.message. Log it so the
         // denied_token bucket is observable, not a black box. warn, not
         // error: a denied exchange is an expected client-caused outcome.
-        console.warn(
-          `[/api/auth/exchange/k8s] denied ${e.reason} (${e.status}): ${e.message}`,
-        );
+        log.warn("k8s exchange denied", { reason: e.reason, status: e.status, error: outside(e.message) });
         recordExchange(e.reason);
         return c.json(
           { error: e.message, reason: e.reason },
           e.status as Parameters<typeof c.json>[1],
         );
       }
-      console.error("[/api/auth/exchange/k8s] unexpected:", e);
+      log.error("k8s exchange failed", { error: errorText(e) });
       recordExchange("error_internal");
       return c.json({ error: "internal error", reason: "error_internal" }, 500);
     }
@@ -398,7 +396,7 @@ if (process.env.TEST_MODE !== "true") {
           e.status as Parameters<typeof c.json>[1],
         );
       }
-      console.error("[/api/auth/exchange/federation] unexpected:", e);
+      log.error("federation exchange failed", { error: errorText(e) });
       recordFederationExchange("error_internal");
       return c.json({ error: "internal error", reason: "error_internal" }, 500);
     }
@@ -455,15 +453,12 @@ if (process.env.TEST_MODE !== "true") {
       // Structured audit line. Per-mint identity lives here, NOT in a
       // metric label (cardinality discipline). The cert body itself is a
       // bearer credential and is never logged.
-      console.warn(
-        "[ssh-cert] issued",
-        JSON.stringify({
-          sub: result.subject,
-          key_id: result.keyId,
-          principals: result.principals,
-          valid_before: result.validBefore,
-        }),
-      );
+      log.info("ssh certificate issued", {
+        sub: result.subject,
+        key_id: result.keyId,
+        principals: result.principals.join(","),
+        valid_before: result.validBefore,
+      });
       return c.json({
         certificate: result.certificate,
         valid_before: result.validBefore,
@@ -479,7 +474,7 @@ if (process.env.TEST_MODE !== "true") {
           e.status as Parameters<typeof c.json>[1],
         );
       }
-      console.error("[/api/auth/exchange/ssh-cert] unexpected:", e);
+      log.error("ssh certificate exchange failed", { error: errorText(e) });
       recordSshCertExchange("error_internal");
       return c.json({ error: "internal error", reason: "error_internal" }, 500);
     }
@@ -623,17 +618,14 @@ if (process.env.TEST_MODE !== "true") {
         apps,
         ttlSeconds: USER_LOGIN_TOKEN_TTL_SECONDS,
       });
-      console.warn(
-        "[/api/auth/cli/user-token] minted:",
-        JSON.stringify({ email: u.email, role: u.role, exp: signed.exp }),
-      );
+      log.info("user token minted", { email: u.email, role: u.role, exp: signed.exp });
       return c.json({
         token: signed.token,
         expires_at: signed.exp,
         expires_in_hours: USER_LOGIN_TOKEN_TTL_SECONDS / 3600,
       });
     } catch (e) {
-      console.error("[/api/auth/cli/user-token] mint failed:", e);
+      log.error("user token mint failed", { error: errorText(e) });
       return c.json({ error: "failed to mint token" }, 500);
     }
   });
@@ -659,7 +651,7 @@ if (process.env.TEST_MODE !== "true") {
       if (ssh !== undefined && (!Array.isArray(ssh) || ssh.some((g) => !g || typeof g.target !== "string" || typeof g.user !== "string"))) return c.json({ error: "invalid SSH grants" }, 400);
       for (const grant of (ssh ?? []) as { target: string; user: string }[]) machineSshPrincipal(subject, grant.target, grant.user, apps as Record<string, unknown>);
       await db.update(user).set({ apps: JSON.stringify(apps), updatedAt: new Date() }).where(eq(user.id, subject));
-      console.warn("[machine-grants] updated:", JSON.stringify({ subject, administrator: sponsor.email }));
+      log.info("machine grants updated", { subject, administrator: sponsor.email });
       return c.json({ subject, apps });
     } catch (e) {
       if (e instanceof DeviceError) return deviceErrorResponse(c, "enroll", e);
@@ -707,7 +699,7 @@ if (process.env.TEST_MODE !== "true") {
         await tx.insert(user).values({ ...identity, role: "service", emailVerified: true,
           apps: JSON.stringify({ fzt: { owner_sub: u.id }, ssh: [] }) }).onConflictDoNothing();
       });
-      console.warn("[/api/auth/device/enroll] registered:", JSON.stringify({ email: u.email, device: req.name, id }));
+      log.info("device enrolled", { email: u.email, device: req.name, id });
       recordDevice("enroll", "success");
       return c.json({ device_id: id, name: req.name, token_url: DEVICE_TOKEN_URL, machine_subject: identity.id });
     } catch (e) {
@@ -758,7 +750,7 @@ if (process.env.TEST_MODE !== "true") {
         const now = Math.floor(Date.now() / 1000);
         const signed = getSshCertSigner().signUserCert({ userPublicKey: publicKey, keyId: `${identity.id}/${dev.id}`,
           principals: [principal], extensions: ["permit-pty"], validAfter: now - SSH_CERT_SKEW_SECONDS, validBefore: now + target.ttlSeconds });
-        console.warn("[/api/auth/device/token] SSH certificate:", JSON.stringify({ subject: identity.id, principal, expires_at: signed.validBefore }));
+        log.info("device ssh certificate issued", { subject: identity.id, principal, expires_at: signed.validBefore });
         recordDevice("token", "success_ssh");
         return c.json({ certificate: signed.authorizedKeyLine, expires_at: signed.validBefore, subject: identity.id, principal });
       }
@@ -770,12 +762,12 @@ if (process.env.TEST_MODE !== "true") {
         if (!audience) throw new DeviceError("audience_not_allowed", 403, "Tailscale federation isn't configured on this server");
         const subject = machineTailnetSubject(dev.name);
         const signed = await mintFederationJwt({ subject, audience, ttlSeconds: target.ttlSeconds });
-        console.warn("[/api/auth/device/token] tailscale federation:", JSON.stringify({ subject, device: dev.name, exp: signed.exp }));
+        log.info("device tailscale token minted", { subject, device: dev.name, exp: signed.exp });
         recordDevice("token", "success_tailscale");
         return c.json({ token: signed.token, expires_at: signed.exp, subject, audience });
       }
       const signed = await mintAuthJwt(machineTokenInput(u.id, dev.name, apps));
-      console.warn("[/api/auth/device/token] minted:", JSON.stringify({ subject: identity.id, device: dev.name, role: "service", exp: signed.exp }));
+      log.info("device token minted", { subject: identity.id, device: dev.name, role: "service", exp: signed.exp });
       recordDevice("token", "success_machine");
       return c.json({ token: signed.token, expires_at: signed.exp, subject: identity.id });
     } catch (e) {
@@ -803,7 +795,7 @@ if (process.env.TEST_MODE !== "true") {
         id, machineSubject: machine.subject, deviceName: machine.device,
         reason: req.reason, minutes: req.minutes, requestExpiresAt,
       });
-      console.warn("[azure-access] requested:", JSON.stringify({ id, device: machine.device, minutes: req.minutes, reason: req.reason }));
+      log.info("azure access requested", { id, device: machine.device, minutes: req.minutes, reason: outside(req.reason) });
       recordAzureAccess("request", "success");
       return c.json({
         id, status: "pending", minutes: req.minutes,
@@ -849,13 +841,18 @@ async function approvedUser(id: string) {
   return u;
 }
 
+// A device request's audience, device and subject come from the caller: masked for the log.
+function attemptFields(attempt?: Record<string, string | undefined>): Record<string, string> {
+  return Object.fromEntries(Object.entries(attempt ?? {}).map(([key, value]) => [key, outside(value ?? "")]));
+}
+
 function deviceErrorResponse(c: Context, action: "enroll" | "token", e: unknown, attempt?: Record<string, string | undefined>) {
   if (e instanceof DeviceError) {
-    console.warn(`[/api/auth/device/${action}] refused:`, JSON.stringify({ ...attempt, reason: e.reason }));
+    log.warn("device request refused", { action, ...attemptFields(attempt), reason: e.reason });
     recordDevice(action, e.reason);
     return c.json({ error: e.message, reason: e.reason }, e.status);
   }
-  console.error(`[/api/auth/device/${action}] failed:`, JSON.stringify(attempt ?? {}), e);
+  log.error("device request failed", { action, ...attemptFields(attempt), error: errorText(e) });
   recordDevice(action, "internal");
   return c.json({ error: "internal error", reason: "internal" }, 500);
 }
@@ -906,11 +903,11 @@ async function verifyMachineBearer(c: Context): Promise<{ subject: string; devic
 
 function azureAccessErrorResponse(c: Context, action: "request" | "status" | "decide" | "token", e: unknown) {
   if (e instanceof AzureAccessError) {
-    console.warn(`[azure-access] ${action} refused:`, JSON.stringify({ reason: e.reason, error: e.message }));
+    log.warn("azure access refused", { action, reason: e.reason, error: outside(e.message) });
     recordAzureAccess(action, e.reason);
     return c.json({ error: e.message, reason: e.reason }, e.status);
   }
-  console.error(`[azure-access] ${action} failed:`, e);
+  log.error("azure access failed", { action, error: errorText(e) });
   recordAzureAccess(action, "internal");
   return c.json({ error: "internal error", reason: "internal" }, 500);
 }
@@ -937,7 +934,7 @@ async function mintAzureAccessToken(c: Context, subject: string, deviceName: str
     const signed = await mintFederationJwt({ subject: AZURE_ACCESS_SUBJECT, audience: AZURE_ACCESS_AUDIENCE, ttlSeconds: ttl });
     await db.update(azureAccessGrant).set({ lastTokenAt: now, tokenCount: sql`${azureAccessGrant.tokenCount} + 1` })
       .where(eq(azureAccessGrant.id, grant.id));
-    console.warn("[azure-access] token:", JSON.stringify({ grant: grant.id, device: deviceName, exp: signed.exp }));
+    log.info("azure access token minted", { grant: grant.id, device: deviceName, exp: signed.exp });
     recordAzureAccess("token", "success");
     recordDevice("token", "success_azure");
     return c.json({
@@ -3052,10 +3049,7 @@ async function mintAdminBotToken(
   });
 
   recordAdminBotTokenMint();
-  console.warn(
-    source === "admin-console" ? "[/admin/bot-tokens] minted:" : "[/api/cli/token] minted:",
-    JSON.stringify({ email: u.email, exp: signed.exp, purpose: "bot", source }),
-  );
+  log.info("bot token minted", { email: u.email, exp: signed.exp, purpose: "bot", source });
 
   return {
     token: signed.token,
@@ -3085,7 +3079,7 @@ app.post("/admin/bot-tokens", async (c) => {
   try {
     return c.json(await mintAdminBotToken(u, "admin-console"));
   } catch (e) {
-    console.error("[/admin/bot-tokens] mintAuthJwt failed:", e);
+    log.error("bot token mint failed", { source: "admin-console", error: errorText(e) });
     return c.json({ error: "failed to mint token" }, 500);
   }
 });
@@ -3154,7 +3148,7 @@ app.post("/admin/service-tokens", async (c) => {
       ttlSeconds: SERVICE_TOKEN_TTL_SECONDS,
     });
   } catch (e) {
-    console.error("[/admin/service-tokens] mintAuthJwt failed:", e);
+    log.error("service token mint failed", { error: errorText(e) });
     return c.json({ error: "failed to mint token" }, 500);
   }
 
@@ -3165,16 +3159,13 @@ app.post("/admin/service-tokens", async (c) => {
   // actor from caller will surface in the log diff). `purpose=bot` is
   // intentional: it tells downstream audit pipelines that this is a
   // human-minted convenience token, not a pod-issued exchange token.
-  console.warn(
-    "[/admin/service-tokens] minted:",
-    JSON.stringify({
-      email: u.email,
-      actor_email: u.email,
-      exp: signed.exp,
-      role: "service",
-      purpose: "bot",
-    }),
-  );
+  log.info("service token minted", {
+    email: u.email,
+    actor_email: u.email,
+    exp: signed.exp,
+    role: "service",
+    purpose: "bot",
+  });
 
   return c.json({
     token: signed.token,
@@ -3237,7 +3228,7 @@ app.post("/admin/test-slot-model-approvals/grants", async (c) => {
       ttlSeconds: SERVICE_TOKEN_TTL_SECONDS,
     });
   } catch (e) {
-    console.error("[/admin/test-slot-model-approvals/grants] mintAuthJwt failed:", e);
+    log.error("test-slot model approval token mint failed", { error: errorText(e) });
     return c.json({ error: "failed to mint service token" }, 500);
   }
 
@@ -3254,19 +3245,16 @@ app.post("/admin/test-slot-model-approvals/grants", async (c) => {
     });
   } catch (e) {
     if (e instanceof TestSlotModelApprovalError) {
-      console.error(
-        "[/admin/test-slot-model-approvals/grants] tank grant failed:",
-        JSON.stringify({
-          email: u.email,
-          session_id: parsed.sessionId,
-          session_scope: parsed.sessionScope,
-          mode: parsed.mode,
-          model: parsed.model,
-          effort: parsed.effort,
-          status: e.status,
-          upstream_body: e.upstreamBody,
-        }),
-      );
+      log.error("test-slot model approval tank grant failed", {
+        email: u.email,
+        session_id: parsed.sessionId,
+        session_scope: parsed.sessionScope,
+        mode: parsed.mode,
+        model: parsed.model,
+        effort: parsed.effort,
+        status: e.status,
+        upstream_body: outside(e.upstreamBody),
+      });
       return c.json(
         {
           error: "tank grant failed",
@@ -3276,28 +3264,25 @@ app.post("/admin/test-slot-model-approvals/grants", async (c) => {
         502,
       );
     }
-    console.error("[/admin/test-slot-model-approvals/grants] tank grant failed:", e);
+    log.error("test-slot model approval tank grant failed", { error: errorText(e) });
     return c.json({ error: "tank grant failed" }, 502);
   }
 
   recordAdminTestSlotModelApproval();
-  console.warn(
-    "[/admin/test-slot-model-approvals/grants] approved:",
-    JSON.stringify({
-      email: u.email,
-      actor_email: u.email,
-      session_id: parsed.sessionId,
-      session_scope: parsed.sessionScope,
-      mode: parsed.mode,
-      provider: parsed.provider,
-      model: parsed.model,
-      effort: parsed.effort,
-      low_model: parsed.lowModel,
-      low_effort: parsed.lowEffort,
-      request_event_id: parsed.requestEventId,
-      ttl_seconds: parsed.ttlSeconds,
-    }),
-  );
+  log.info("test-slot model approved", {
+    email: u.email,
+    actor_email: u.email,
+    session_id: parsed.sessionId,
+    session_scope: parsed.sessionScope,
+    mode: parsed.mode,
+    provider: parsed.provider,
+    model: parsed.model,
+    effort: parsed.effort,
+    low_model: parsed.lowModel,
+    low_effort: parsed.lowEffort,
+    request_event_id: parsed.requestEventId,
+    ttl_seconds: parsed.ttlSeconds,
+  });
 
   return c.json({
     status: "approved",
@@ -3329,7 +3314,7 @@ app.post("/admin/users", async (c) => {
   try {
     await db.insert(user).values({ id, email, name, role, emailVerified: false });
   } catch (err) {
-    console.error("[admin/users] insert failed:", err);
+    log.error("user insert failed", { error: errorText(err) });
     return c.text("insert failed (email likely already exists)", 400);
   }
   return c.redirect(`/admin?ok=enrolled+${encodeURIComponent(email)}`);
@@ -3345,7 +3330,7 @@ app.post("/admin/devices/:id/revoke", async (c) => {
   const rows = await db.update(device).set({ revokedAt: new Date() })
     .where(and(eq(device.id, id), isNull(device.revokedAt))).returning({ name: device.name });
   if (rows.length === 0) return c.text("no such device", 404);
-  console.warn("[/admin/devices/revoke] revoked:", JSON.stringify({ id, device: rows[0].name }));
+  log.info("device revoked", { id, device: rows[0].name });
   recordDevice("revoke", "success");
   return c.redirect(`/admin?ok=${encodeURIComponent(`revoked ${rows[0].name}`)}`);
 });
@@ -3706,7 +3691,7 @@ app.post("/azure-access/:id", async (c) => {
     return c.html(azureAccessPage(latest, `Nothing changed: ${azureAccessMessage(latest)}`), 409);
   }
   azureDecisions.notify(id);
-  console.warn("[azure-access] decided:", JSON.stringify({ id, decision, device: row.deviceName, administrator: admin.email }));
+  log.info("azure access decided", { id, decision, device: row.deviceName, administrator: admin.email });
   recordAzureAccess("decide", decision);
   return c.html(azureAccessPage(updated[0], azureAccessMessage(updated[0])));
 });
@@ -3932,7 +3917,7 @@ async function consumeApprovedCliGrant(c: Context, grant: CliDeviceGrantRow) {
     const metadata = decodeCliGrantMetadata(grant.clientName);
     approvalValues = requireApprovalValues(metadata.approvalInputs, metadata.approvalValues);
   } catch (e) {
-    console.error("[/api/cli/token] invalid approval values:", e);
+    log.error("cli token approval values invalid", { error: errorText(e) });
     return oauthError(c, "invalid_grant");
   }
 
@@ -3957,7 +3942,7 @@ async function consumeApprovedCliGrant(c: Context, grant: CliDeviceGrantRow) {
       approval_values: approvalValues,
     });
   } catch (e) {
-    console.error("[/api/cli/token] signJWT failed:", e);
+    log.error("bot token mint failed", { source: "cli-device", error: errorText(e) });
     return c.json({ error: "failed to mint token" }, 500);
   }
 }
@@ -4086,12 +4071,13 @@ async function socialSignInRedirect(
       asResponse: true,
     });
     if (!authRes.ok) {
-      console.error(`[sign-in:${provider}] better-auth returned`, authRes.status, await authRes.text());
+      log.error("sign-in failed", { provider, status: authRes.status, body: outside(await authRes.text()) });
       return c.text("sign-in failed", 500);
     }
     const data = await authRes.json() as { url?: string };
     if (!data.url) {
-      console.error(`[sign-in:${provider}] better-auth response missing url`, data);
+      // The response's keys alone: its values can be a sign-in's state.
+      log.error("sign-in response has no url", { provider, keys: Object.keys(data ?? {}).join(",") });
       return c.text("sign-in failed", 500);
     }
     let redirectUrl = data.url;
@@ -4101,14 +4087,14 @@ async function socialSignInRedirect(
         parsedUrl.searchParams.set("prompt", prompt);
         redirectUrl = parsedUrl.toString();
       } catch (err) {
-        console.error(`[sign-in:${provider}] failed to append prompt to redirect url:`, err);
+        log.error("sign-in prompt not added to the redirect", { provider, error: errorText(err) });
       }
     }
     const redirect = new Response(null, { status: 302, headers: { Location: redirectUrl } });
     copySetCookies(authRes, redirect);
     return redirect;
   } catch (err) {
-    console.error(`[sign-in:${provider}] threw:`, err);
+    log.error("sign-in failed", { provider, error: errorText(err) });
     return c.text("sign-in failed", 500);
   }
 }
@@ -4191,7 +4177,7 @@ app.post("/sign-out", async (c) => {
     copySetCookies(authRes, redirect);
     return redirect;
   } catch (err) {
-    console.error("[sign-out] threw:", err);
+    log.error("sign-out failed", { error: errorText(err) });
     return c.redirect(callbackURL);
   }
 });
@@ -4215,20 +4201,20 @@ async function start(): Promise<void> {
     // type exactly. reconcileOAuthClients depends on three adapter methods and nothing else; see
     // AuthWithAdapter.
     await reconcileOAuthClients(auth as unknown as AuthWithAdapter);
-    console.log(`oauth clients reconciled: ${OAUTH_CLIENT_IDS.join(", ")}`);
+    log.info("oauth clients reconciled", { clients: OAUTH_CLIENT_IDS.join(",") });
     // Azure access requests (src/azure-access.ts): the table is created if missing.
     await db.execute(sql.raw(AZURE_ACCESS_SCHEMA_SQL));
-    console.log("azure access schema ready");
+    log.info("azure access schema ready");
   }
   serve({ fetch: app.fetch, port }, (info) => {
-    console.log(`auth listening on :${info.port}`);
+    log.info("auth listening", { port: info.port });
   });
 }
 
 // The image's self-test (src/self-test.ts) checks the app without serving it.
 if (process.env.SELF_TEST !== "true") {
   start().catch((error) => {
-    console.error("[startup] failed:", error);
+    log.error("startup failed", { error: errorText(error) });
     process.exit(1);
   });
 }

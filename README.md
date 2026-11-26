@@ -96,6 +96,7 @@ tokens until their original 24-hour expiry.
 - **Better Auth** for the OAuth/OIDC flow, session storage, custom user fields, and JWT issuance
 - **Drizzle** (postgres-js driver) against a **CloudNativePG** Postgres cluster running in this app's namespace
 - All secrets injected via env: DB creds come from CNPG's auto-managed `auth-db-app` Secret; OAuth client secrets and `BETTER_AUTH_SECRET` arrive via an ExternalSecret synced from the auth-owned `ng6-auth` Key Vault. The pod itself has no direct Azure dependencies
+- **Logs**: the estate's one log line ([romaine-life/logline](https://forgejo.romaine.life/romaine-life/logline), `@romaine-life/logline` from Forgejo's npm registry, read through `.npmrc`) on stdout, through `src/log.ts`: a fixed message and `key=value` fields, one `request` line per answered request (method, path without its query, status, ms). A token, code, cookie, certificate or Authorization value is never passed to the log; error text, upstream bodies and caller-supplied values go through `outside`/`errorText`, which mask credentials
 
 ## Endpoints
 
@@ -224,7 +225,7 @@ than serving an empty trust anchor. The CA **public** key is served at
 
 `auth_ssh_cert_exchange_total{result}` counts issuances by outcome; per-mint
 identity (subject, key id, principals, expiry) is in a structured
-`[ssh-cert] issued` audit log line, not a metric label (cardinality
+`ssh certificate issued` log line, not a metric label (cardinality
 discipline). A sustained `error_ca_unconfigured` means issuance is down even
 while sign-in and the JWT exchanges are healthy.
 
@@ -259,8 +260,8 @@ leaked" since the bot-token surface is rare-event by design; rolling has no
 steady-state cost.
 
 Observability: `auth_admin_bot_tokens_minted_total` (Prometheus, label-free —
-the per-mint identity is captured by a `console.warn` line that includes the
-admin's email, so structured-log search is the audit path).
+the per-mint identity is captured by a `bot token minted` log line that includes the
+admin's email, so log search is the audit path).
 
 ## Admin service tokens (CLI auth for service-only MCPs)
 
@@ -299,7 +300,7 @@ evolve this surface.
 
 Observability: `auth_admin_service_tokens_minted_total` (Prometheus,
 label-free, same posture as the bot-token counter). A separate
-`console.warn` line per mint carries the admin's email and the issued
+`service token minted` log line per mint carries the admin's email and the issued
 `actor_email` (equal today, kept explicit so a future decoupling
 surfaces in the log diff).
 
@@ -347,7 +348,7 @@ tokens for it. An Azure sign-in already made keeps its access token until that e
 the hour.
 
 **Record.** Every request and decision is a row in `azure_access_grant` (created at startup),
-logged as `[azure-access]` lines, and counted in `auth_azure_access_total{action,result}`.
+logged as `azure access ...` lines, and counted in `auth_azure_access_total{action,result}`.
 
 **Configuration.** `azureAccess.clientId` and `azureAccess.tenantId` in `k8s/values.yaml` are
 infra-bootstrap's tofu outputs `azure_access_client_id` and `azure_access_tenant_id`. Empty,

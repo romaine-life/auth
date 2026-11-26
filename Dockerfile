@@ -4,8 +4,9 @@ FROM artifacts.home.romaine.life/dockerhub/library/node:22-alpine@sha256:1314fb3
 WORKDIR /app
 ENV NPM_CONFIG_REGISTRY=https://artifacts.home.romaine.life/npm/npm/
 
-COPY package*.json ./
-RUN npm ci
+# @romaine-life/logline comes from Forgejo's npm registry (.npmrc), read with CI's sign-in.
+COPY package*.json .npmrc ./
+RUN --mount=type=secret,id=FORGEJO_PACKAGES_TOKEN,env=FORGEJO_PACKAGES_TOKEN npm ci
 
 COPY tsconfig.json ./
 COPY drizzle.config.ts ./
@@ -13,7 +14,7 @@ COPY src/ src/
 RUN npm run build
 
 # Re-install only production deps so the runtime image is smaller.
-RUN npm ci --omit=dev && npm cache clean --force
+RUN --mount=type=secret,id=FORGEJO_PACKAGES_TOKEN,env=FORGEJO_PACKAGES_TOKEN npm ci --omit=dev && npm cache clean --force
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────
 FROM artifacts.home.romaine.life/dockerhub/library/node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
