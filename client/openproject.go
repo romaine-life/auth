@@ -12,13 +12,15 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/romaine-life/auth/internal/netclient"
 )
 
 // OpenProjectURL is the home OpenProject (nelsong6/openproject). The home network's DNS
 // answers its name, so machine calls stay at home (OPADMIN-23).
 const OpenProjectURL = "https://openproject.home.romaine.life"
 
-var openProjectClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+var openProjectClient = netclient.New(netclient.Options{CheckRedirect: noRedirect})
 
 // ReadOpenProjectCredentials returns a token for the home OpenProject as this machine.
 // The machine reads its own OpenProject OAuth client from OpenBao with its device login
@@ -59,9 +61,11 @@ func ReadOpenProjectCredentials(ctx context.Context) (Credentials, error) {
 		return Credentials{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, err := openProjectClient.Do(req)
+	// A client-credentials grant changes nothing but issuing a token, so a repeat after a
+	// lost answer is safe.
+	response, err := openProjectClient.Do(netclient.RetrySafe(req))
 	if err != nil {
-		return Credentials{}, &AuthError{Kind: "unreachable", Detail: "cannot reach OpenProject"}
+		return Credentials{}, &AuthError{Kind: "unreachable", Detail: "cannot reach OpenProject: " + netDetail(err)}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -100,7 +104,7 @@ func OpenProjectRequest(ctx context.Context, method, path string, body []byte, o
 	req.Header.Set("Content-Type", "application/json")
 	response, err := openProjectClient.Do(req)
 	if err != nil {
-		return errors.New("cannot reach OpenProject")
+		return errors.New("cannot reach OpenProject: " + netDetail(err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {

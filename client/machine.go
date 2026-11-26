@@ -14,10 +14,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/romaine-life/auth/internal/netclient"
 )
 
 const BaseURL = "https://auth.romaine.life"
@@ -31,7 +34,22 @@ func (e *AuthError) Error() string { return "machine sign-in: " + e.Detail }
 
 var machineRegistration = ReadRegistration
 var machineKey = openPlatformKey
-var requestClient = &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+// requestClient calls auth.romaine.life. Like every client here it has no total timeout:
+// internal/netclient bounds connection setup, the wait for headers and body stalls, and
+// retries transient failures. It never follows a redirect.
+var requestClient = netclient.New(netclient.Options{CheckRedirect: noRedirect})
+
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+// netDetail is a failed call's own reason, without the method and URL http.Client adds.
+func netDetail(err error) string {
+	var u *url.Error
+	if errors.As(err, &u) {
+		return u.Err.Error()
+	}
+	return err.Error()
+}
 
 type Registration struct {
 	DeviceID string `json:"device_id"`
@@ -282,7 +300,7 @@ func post(ctx context.Context, url string, body any, bearer string, out any) err
 	}
 	response, e := requestClient.Do(req)
 	if e != nil {
-		return &AuthError{Kind: "unreachable", Detail: "cannot reach auth.romaine.life"}
+		return &AuthError{Kind: "unreachable", Detail: "cannot reach auth.romaine.life: " + netDetail(e)}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {

@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -209,12 +210,30 @@ func TestOpenBaoTimeoutIsNotUnreachable(t *testing.T) {
 	}
 }
 
-func TestOpenBaoHasItsOwnBudget(t *testing.T) {
-	if baoClient.Timeout != time.Minute || requestClient.Timeout != 20*time.Second {
-		t.Fatalf("OpenBao %v, shared %v", baoClient.Timeout, requestClient.Timeout)
+// No client caps a call's total duration: on a slow link that turned a slow answer into
+// "unreachable". internal/netclient bounds setup, headers and body stalls instead.
+func TestNoClientHasATotalTimeout(t *testing.T) {
+	for name, c := range map[string]*http.Client{"auth": requestClient, "OpenBao": baoClient, "OpenProject": openProjectClient, "Tailscale": tailscaleHTTP} {
+		if c.Timeout != 0 {
+			t.Errorf("%s caps calls at %v", name, c.Timeout)
+		}
 	}
-	if baoClient.CheckRedirect == nil {
-		t.Fatal("OpenBao calls would follow a redirect")
+}
+
+// The clients that never followed a redirect still don't; Tailscale's still does.
+func TestRedirectPoliciesAreKept(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/end", http.StatusFound)
+		}
+	}))
+	defer srv.Close()
+	for name, want := range map[*http.Client]int{requestClient: http.StatusFound, baoClient: http.StatusFound, openProjectClient: http.StatusFound, tailscaleHTTP: http.StatusOK} {
+		res, err := name.Get(srv.URL + "/start")
+		if err != nil || res.StatusCode != want {
+			t.Fatalf("got %v, %v; want %d", res, err, want)
+		}
+		res.Body.Close()
 	}
 }
 

@@ -16,6 +16,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/romaine-life/auth/internal/netclient"
 )
 
 // BaoURL is the home secret store (nelsong6/openbao). A device logs in there with its
@@ -27,8 +29,9 @@ const HomeIssuer = BaoURL + "/v1/identity/oidc"
 
 var homeRole = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-// A login writes to OpenBao's raft log, which took up to 20 s under a NAS disk scrub.
-var baoClient = &http.Client{Timeout: 60 * time.Second, CheckRedirect: requestClient.CheckRedirect}
+// A login writes to OpenBao's raft log, which took up to 20 s under a NAS disk scrub; the
+// netclient's 60 s wait for headers covers that, with no total cap on the call.
+var baoClient = netclient.New(netclient.Options{CheckRedirect: noRedirect})
 
 // homeTokenMargin keeps a caller from receiving a token that dies mid-request.
 const homeTokenMargin = 60 * time.Second
@@ -78,9 +81,9 @@ func baoCall(ctx context.Context, method, path, baoToken string, body any, out a
 	if e != nil {
 		var timeout interface{ Timeout() bool }
 		if errors.As(e, &timeout) && timeout.Timeout() {
-			return &AuthError{Kind: "timeout", Detail: "OpenBao at " + BaoURL + " took too long to answer"}
+			return &AuthError{Kind: "timeout", Detail: "OpenBao at " + BaoURL + " took too long to answer: " + netDetail(e)}
 		}
-		return &AuthError{Kind: "unreachable", Detail: "cannot reach OpenBao at " + BaoURL}
+		return &AuthError{Kind: "unreachable", Detail: "cannot reach OpenBao at " + BaoURL + ": " + netDetail(e)}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
@@ -188,7 +191,7 @@ func BaoRequest(ctx context.Context, method, path string, body []byte, out io.Wr
 	}
 	response, e := baoClient.Do(req)
 	if e != nil {
-		return &AuthError{Kind: "unreachable", Detail: "cannot reach OpenBao at " + BaoURL}
+		return &AuthError{Kind: "unreachable", Detail: "cannot reach OpenBao at " + BaoURL + ": " + netDetail(e)}
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {

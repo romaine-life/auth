@@ -126,7 +126,7 @@ func fetchSSHCA(ctx context.Context) (ssh.PublicKey, error) {
 	}
 	response, err := requestClient.Do(req)
 	if err != nil {
-		return nil, errors.New("cannot fetch auth's SSH CA public key")
+		return nil, errors.New("cannot fetch auth's SSH CA public key: " + netDetail(err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {

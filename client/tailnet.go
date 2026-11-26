@@ -18,7 +18,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
+
+	"github.com/romaine-life/auth/internal/netclient"
 )
 
 // TailscaleToken is auth's federation token for the tailnet's trust credential.
@@ -42,7 +43,8 @@ func GetTailscaleToken(ctx context.Context) (TailscaleToken, error) {
 // TailscaleAPI is Tailscale's API; tests replace it.
 var TailscaleAPI = "https://api.tailscale.com/api/v2"
 
-var tailscaleHTTP = &http.Client{Timeout: 30 * time.Second}
+// tailscaleHTTP follows redirects, as the default client it replaced did.
+var tailscaleHTTP = netclient.New(netclient.Options{})
 
 // TailnetAuthKey trades the federation token at Tailscale for a one-use, pre-approved,
 // non-ephemeral auth key carrying tags, valid five minutes.

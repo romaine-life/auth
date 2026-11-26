@@ -130,7 +130,7 @@ func azureCall(ctx context.Context, method, u, bearer string, body any, out any)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return &AuthError{Kind: "unreachable", Detail: "cannot reach auth.romaine.life"}
+		return &AuthError{Kind: "unreachable", Detail: "cannot reach auth.romaine.life: " + netDetail(err)}
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {

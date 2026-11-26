@@ -36,6 +36,22 @@ romaine-auth version
 
 `bao` (`client.BaoRequest`) makes one OpenBao API call as this machine's device login, at a path under `/v1/` (`get`, `list`, `post`, `patch`, `delete`; a body from a file or `--body-stdin`, never the command line). `patch` sends a JSON merge patch, so `{"data":{"key":null}}` removes one value. What it may do is the device role's policies in nelsong6/openbao; the home PCs Claude works on keep every secret there (BAO-12).
 
+Every call the client makes to auth, OpenBao, OpenProject or Tailscale goes through
+`internal/netclient`, built for slow, lossy links (a hotel Wi-Fi at 250 ms and heavy loss,
+with the tunnel home up). No call has a total-duration cap. Connecting and the TLS
+handshake are bounded at 30 seconds each and the wait for response headers at 60; a
+response body fails only after 60 seconds with no byte arriving. Dial errors, timeouts,
+connection resets and HTTP 502/503/504 are retried with capped exponential backoff and
+jitter (half a second doubling to 30 seconds) for up to ten minutes, each retry printing
+`slow link to <host>: <short error>, retrying (n) in <d>` to stderr, and a call that never
+gets through fails naming the host and how long it was tried. A request is resent only
+when that cannot repeat an action: a failure before any byte of it was written is resent
+whatever the method, and a later one only for GET, HEAD, PUT, DELETE or OpenBao's LIST, or a request the
+code marks `netclient.RetrySafe` (only the OpenProject client-credentials grant, which
+just issues another token). So `op post`/`op patch` (`wp set`, `wp comment`), OpenBao
+logins and writes, and auth's token exchanges are never resent once sent, nor on a 5xx.
+Redirect policy is each client's own: auth, OpenBao and OpenProject calls never follow one.
+
 `home-token` (`client.HomeToken`) gets a five-minute token OpenBao signs for a home service, with no call to this service, and reuses it from `home-token-<role>.json` beside `machine-token.json` until a minute before it expires; `IsHomeDevice` recognizes one, and its `device` claim names the machine, because its `sub` is an OpenBao entity UUID.
 
 Enrollment uses a recent browser sign-in only to authorize the public-key registration.
