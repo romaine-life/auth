@@ -1,6 +1,6 @@
 # Argo CD renders templates/. The image by release tag and digest, rewritten by the suite's
 # pin PR on each release.
-image: romainecr.azurecr.io/auth:v0.1.67@sha256:712c5e8b147e2bb184da31418f79f0aa89bd29fa96279acb8b17c4fe54b3f96d
+image: romainecr.azurecr.io/auth:v0.1.70@sha256:6c3d2ec8d4e8ffaa2d47ddca8bb5a4cc247293a9797de2a8e798f825d39f6583
 
 externalSecret:
   createStore: true
