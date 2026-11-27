@@ -71,7 +71,12 @@ export interface FederationJwtInput {
   subject: string;
   audience: string;
   ttlSeconds?: number;
+  /** Claims the consumer reads beside sub (the home cluster's break-glass token carries
+   *  `device` and `grant`). They never replace iss, aud, sub, iat, exp, nbf or jti. */
+  claims?: Record<string, string>;
 }
+
+const REGISTERED_CLAIMS = ["iss", "aud", "sub", "iat", "exp", "nbf", "jti"];
 
 export async function mintFederationJwt(input: FederationJwtInput): Promise<MintResult> {
   if (typeof input.subject !== "string" || input.subject.length === 0) {
@@ -96,7 +101,10 @@ export async function mintFederationJwt(input: FederationJwtInput): Promise<Mint
   // and sets them on the JWT via jose's SignJWT builder; everything
   // else on the payload is included verbatim. Keeping the payload
   // minimal is the contract with the external consumer.
+  const reserved = Object.keys(input.claims ?? {}).find((name) => REGISTERED_CLAIMS.includes(name));
+  if (reserved) throw new Error(`mintFederationJwt: claims may not set ${reserved}`);
   const payload = {
+    ...input.claims,
     iss: "https://auth.romaine.life",
     aud: input.audience,
     sub: input.subject,

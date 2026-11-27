@@ -32,7 +32,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, bao get|list|post|patch|delete PATH, ssh --user USER HOST [COMMAND...], azure request --reason TEXT [--minutes N] | azure login, tailnet join [--force], or version")
+		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, bao get|list|post|patch|delete PATH, ssh --user USER HOST [COMMAND...], azure request --reason TEXT [--minutes N] | azure login, break-glass request --reason TEXT --session ID [--minutes N] | break-glass status --session ID [--json], cluster token, tailnet join [--force], or version")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -192,6 +192,10 @@ func run(args []string) error {
 		return nil
 	case "azure":
 		return runAzure(ctx, args[1:])
+	case "break-glass":
+		return runBreakGlass(ctx, args[1:])
+	case "cluster":
+		return runCluster(ctx, args[1:])
 	case "home-token":
 		flags := flag.NewFlagSet("home-token", flag.ContinueOnError)
 		out := flags.String("out", "", "protected output file (required)")

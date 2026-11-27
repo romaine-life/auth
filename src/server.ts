@@ -10,7 +10,7 @@ import { OAUTH_CLIENT_IDS, reconcileOAuthClients, type AuthWithAdapter } from ".
 import { adminLoginRedirectPath } from "./admin-redirect.js";
 import { landingSignInRedirect, signedOAuthQuery } from "./oidc-login-provider.js";
 import { db } from "./db/client.js";
-import { account, azureAccessGrant, cliDeviceGrant, device, session, user } from "./db/schema.js";
+import { account, azureAccessGrant, breakGlassGrant, cliDeviceGrant, device, session, user } from "./db/schema.js";
 import {
   AZURE_ACCESS_AUDIENCE,
   AZURE_ACCESS_SCHEMA_SQL,
@@ -24,6 +24,12 @@ import {
   machineFromClaims,
   parseAzureAccessRequest,
 } from "./azure-access.js";
+import {
+  BREAK_GLASS_AUDIENCE,
+  BREAK_GLASS_SCHEMA_SQL,
+  breakGlassTokenTtlSeconds,
+  parseBreakGlassRequest,
+} from "./break-glass.js";
 import {
   appendCallbackParams,
   buildRequesterGuidance,
@@ -95,6 +101,7 @@ import {
   recordSshCertExchange,
   recordDevice,
   recordAzureAccess,
+  recordBreakGlass,
   registry,
 } from "./metrics.js";
 import {
@@ -757,6 +764,9 @@ if (process.env.TEST_MODE !== "true") {
       if (target?.audience === "azure") {
         return await mintAzureAccessToken(c, identity.id, dev.name);
       }
+      if (target?.audience === BREAK_GLASS_AUDIENCE) {
+        return await mintBreakGlassToken(c, identity.id, dev.name);
+      }
       if (target?.audience === "tailscale") {
         const audience = tailscaleAudience(federationAudienceAllowlist());
         if (!audience) throw new DeviceError("audience_not_allowed", 403, "Tailscale federation isn't configured on this server");
@@ -824,6 +834,72 @@ if (process.env.TEST_MODE !== "true") {
       return c.json(azureGrantJson(row));
     } catch (e) {
       return azureAccessErrorResponse(c, "status", e);
+    }
+  });
+
+  // ── Break-glass on approval (src/break-glass.ts, AHT-209) ─────────────
+  // POST /api/break-glass/requests   Bearer: the machine's own token
+  //   body { reason, minutes?, session }  →  { id, status, session, minutes, approveUrl, requestExpiresAt }
+  // GET  /api/break-glass/requests/:id?wait=N   Bearer: the same machine's token
+  //   →  { id, status, device, session, reason, minutes, requestExpiresAt, grantExpiresAt, decidedBy },
+  //   held open like Azure access's until the request is decided or the wait ends.
+  // GET  /api/break-glass/active   Bearer: the machine's own token
+  //   →  [{ id, session, grantExpiresAt }]: its approved, unexpired, unrevoked grants.
+  // Times are Unix seconds. Errors are { error, reason }.
+  app.post("/api/break-glass/requests", async (c) => {
+    try {
+      const machine = await verifyMachineBearer(c);
+      const req = parseBreakGlassRequest(await readJsonObject(c).catch((e: Error) => {
+        throw new AzureAccessError("invalid_request", 400, e.message);
+      }));
+      const id = `bg_${randomUrlToken(12)}`;
+      const requestExpiresAt = new Date(Date.now() + AZURE_REQUEST_PENDING_SECONDS * 1000);
+      await db.insert(breakGlassGrant).values({
+        id, machineSubject: machine.subject, deviceName: machine.device, session: req.session,
+        reason: req.reason, minutes: req.minutes, requestExpiresAt,
+      });
+      log.info("[break-glass] requested", { id, device: machine.device, session: req.session, minutes: req.minutes, reason: outside(req.reason) });
+      recordBreakGlass("request", "success");
+      return c.json({
+        id, status: "pending", session: req.session, minutes: req.minutes,
+        approveUrl: `${ADMIN_BEARER_ISSUER}/break-glass/${id}`,
+        requestExpiresAt: Math.floor(requestExpiresAt.getTime() / 1000),
+      });
+    } catch (e) {
+      return breakGlassErrorResponse(c, "request", e);
+    }
+  });
+
+  app.get("/api/break-glass/requests/:id", async (c) => {
+    try {
+      const machine = await verifyMachineBearer(c);
+      const id = c.req.param("id");
+      const wait = Math.min(Math.max(Number(c.req.query("wait") ?? 0) || 0, 0), AZURE_WAIT_MAX_SECONDS);
+      let row = await findBreakGlassGrant(id);
+      if (!row || row.machineSubject !== machine.subject) {
+        throw new AzureAccessError("not_found", 404, "no such request from this machine");
+      }
+      if (wait > 0 && effectiveStatus(row, new Date()) === "pending") {
+        await breakGlassDecisions.wait(id, wait * 1000);
+        row = (await findBreakGlassGrant(id)) ?? row;
+      }
+      recordBreakGlass("status", "success");
+      return c.json(breakGlassGrantJson(row));
+    } catch (e) {
+      return breakGlassErrorResponse(c, "status", e);
+    }
+  });
+
+  app.get("/api/break-glass/active", async (c) => {
+    try {
+      const machine = await verifyMachineBearer(c);
+      const grants = await activeBreakGlassGrants(machine.subject, new Date());
+      recordBreakGlass("active", "success");
+      return c.json(grants.map((g) => ({
+        id: g.id, session: g.session, grantExpiresAt: Math.floor((g.grantExpiresAt as Date).getTime() / 1000),
+      })));
+    } catch (e) {
+      return breakGlassErrorResponse(c, "active", e);
     }
   });
 
@@ -944,6 +1020,84 @@ async function mintAzureAccessToken(c: Context, subject: string, deviceName: str
     });
   } catch (e) {
     return azureAccessErrorResponse(c, "token", e);
+  }
+}
+
+// Wakes a status request held open on a break-glass request when it's decided.
+const breakGlassDecisions = createDecisionSignal();
+
+type BreakGlassGrantRow = typeof breakGlassGrant.$inferSelect;
+
+async function findBreakGlassGrant(id: string): Promise<BreakGlassGrantRow | null> {
+  const rows = await db.select().from(breakGlassGrant).where(eq(breakGlassGrant.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+// A machine's approved, unexpired, unrevoked grants, the longest-lasting first.
+async function activeBreakGlassGrants(subject: string, now: Date): Promise<BreakGlassGrantRow[]> {
+  return db.select().from(breakGlassGrant).where(and(
+    eq(breakGlassGrant.machineSubject, subject),
+    eq(breakGlassGrant.status, "approved"),
+    isNull(breakGlassGrant.revokedAt),
+    gt(breakGlassGrant.grantExpiresAt, now),
+  )).orderBy(desc(breakGlassGrant.grantExpiresAt));
+}
+
+function breakGlassGrantJson(row: BreakGlassGrantRow) {
+  const toUnix = (d: Date | null) => (d ? Math.floor(d.getTime() / 1000) : null);
+  return {
+    id: row.id,
+    status: effectiveStatus(row, new Date()),
+    device: row.deviceName,
+    session: row.session,
+    reason: row.reason,
+    minutes: row.minutes,
+    requestExpiresAt: toUnix(row.requestExpiresAt),
+    grantExpiresAt: toUnix(row.grantExpiresAt),
+    decidedBy: row.decidedByEmail,
+  };
+}
+
+function breakGlassErrorResponse(c: Context, action: "request" | "status" | "active" | "decide" | "token", e: unknown) {
+  if (e instanceof AzureAccessError) {
+    log.warn("[break-glass] refused", { action, reason: e.reason, error: outside(e.message) });
+    recordBreakGlass(action, e.reason);
+    return c.json({ error: e.message, reason: e.reason }, e.status);
+  }
+  log.error("[break-glass] failed", { action, error: errorText(e) });
+  recordBreakGlass(action, "internal");
+  return c.json({ error: "internal error", reason: "internal" }, 500);
+}
+
+// The device token exchange with audience "home-cluster-break-glass": a JWT the home
+// cluster's API server takes as cluster-admin, only while this machine holds an approved,
+// unexpired, unrevoked break-glass grant. `device` is the machine's name, as its machine
+// token and OpenBao's home-cluster token name it; `grant` is the grant it rides on.
+async function mintBreakGlassToken(c: Context, subject: string, deviceName: string) {
+  try {
+    const now = new Date();
+    const [grant] = await activeBreakGlassGrants(subject, now);
+    if (!grant || !grant.grantExpiresAt) {
+      throw new AzureAccessError("no_grant", 403, "this machine has no approved break-glass grant: request it with romaine-auth break-glass request");
+    }
+    const ttl = breakGlassTokenTtlSeconds(grant.grantExpiresAt, now);
+    if (ttl <= 0) throw new AzureAccessError("no_grant", 403, "this machine's break-glass grant has ended");
+    const signed = await mintFederationJwt({
+      subject, audience: BREAK_GLASS_AUDIENCE, ttlSeconds: ttl,
+      claims: { device: deviceName, grant: grant.id },
+    });
+    await db.update(breakGlassGrant).set({ lastTokenAt: now, tokenCount: sql`${breakGlassGrant.tokenCount} + 1` })
+      .where(eq(breakGlassGrant.id, grant.id));
+    log.info("[break-glass] token minted", { grant: grant.id, device: deviceName, session: grant.session, exp: signed.exp });
+    recordBreakGlass("token", "success");
+    recordDevice("token", "success_break_glass");
+    return c.json({
+      token: signed.token, expires_at: signed.exp, subject, device: deviceName,
+      grant_id: grant.id, session: grant.session,
+      grant_expires_at: Math.floor(grant.grantExpiresAt.getTime() / 1000),
+    });
+  } catch (e) {
+    return breakGlassErrorResponse(c, "token", e);
   }
 }
 
@@ -3760,6 +3914,125 @@ function azureAccessPage(row: AzureGrantRow | null, message: string) {
   `);
 }
 
+// ── Break-glass approval page (src/break-glass.ts, AHT-209) ───────────────
+// GET  /break-glass/:id   an administrator reviews a session's request
+// POST /break-glass/:id   form decision=approve|deny (pending) or revoke (approved, active)
+app.get("/break-glass/:id", async (c) => {
+  if (TEST_MODE) return c.text("Break-glass is unavailable in test mode", 404);
+  const id = c.req.param("id");
+  const gate = await requireAdmin(c);
+  if ("status" in gate) {
+    if (gate.status === 403) return c.text("forbidden", 403);
+    return c.redirect(`/sign-in/microsoft?callbackURL=${encodeURIComponent(`/break-glass/${id}`)}`);
+  }
+  const row = await findBreakGlassGrant(id);
+  if (!row) return c.html(breakGlassPage(null, "No break-glass request has that link."), 404);
+  return c.html(breakGlassPage(row, breakGlassMessage(row)));
+});
+
+app.post("/break-glass/:id", async (c) => {
+  if (TEST_MODE) return c.text("Break-glass is unavailable in test mode", 404);
+  const gate = await requireAdmin(c);
+  if ("status" in gate) return c.text("forbidden", gate.status === 302 ? 401 : 403);
+  const id = c.req.param("id");
+  const form = await c.req.formData();
+  const decision = String(form.get("decision") ?? "");
+  const admin = gate.user as typeof gate.user & { email?: string };
+  const row = await findBreakGlassGrant(id);
+  if (!row) return c.html(breakGlassPage(null, "No break-glass request has that link."), 404);
+  const now = new Date();
+  const status = effectiveStatus(row, now);
+  let updated: BreakGlassGrantRow[] = [];
+  if ((decision === "approve" || decision === "deny") && status === "pending") {
+    updated = await db.update(breakGlassGrant).set(decision === "approve"
+      ? { status: "approved", decidedAt: now, decidedByEmail: admin.email ?? "",
+          grantExpiresAt: new Date(now.getTime() + row.minutes * 60 * 1000) }
+      : { status: "denied", decidedAt: now, decidedByEmail: admin.email ?? "" })
+      .where(and(eq(breakGlassGrant.id, id), eq(breakGlassGrant.status, "pending"))).returning();
+  } else if (decision === "revoke" && status === "approved") {
+    updated = await db.update(breakGlassGrant).set({ status: "revoked", revokedAt: now, decidedByEmail: admin.email ?? "" })
+      .where(and(eq(breakGlassGrant.id, id), eq(breakGlassGrant.status, "approved"))).returning();
+  } else if (!["approve", "deny", "revoke"].includes(decision)) {
+    return c.text("invalid decision", 400);
+  }
+  if (updated.length === 0) {
+    recordBreakGlass("decide", "conflict");
+    const latest = (await findBreakGlassGrant(id)) ?? row;
+    return c.html(breakGlassPage(latest, `Nothing changed: ${breakGlassMessage(latest)}`), 409);
+  }
+  breakGlassDecisions.notify(id);
+  log.info(`[break-glass] ${decision === "approve" ? "approved" : decision === "deny" ? "denied" : "revoked"}`,
+    { id, device: row.deviceName, session: row.session, administrator: admin.email });
+  recordBreakGlass("decide", decision);
+  return c.html(breakGlassPage(updated[0], breakGlassMessage(updated[0])));
+});
+
+function breakGlassMessage(row: BreakGlassGrantRow): string {
+  const status = effectiveStatus(row, new Date());
+  const until = row.grantExpiresAt ? `${row.grantExpiresAt.toISOString().slice(11, 16)} UTC` : "";
+  switch (status) {
+    case "pending": return `A Claude session on ${row.deviceName} is asking for cluster-admin on the home cluster for ${row.minutes} minutes.`;
+    case "approved": return `Approved by ${row.decidedByEmail}: the session on ${row.deviceName} is past owner-guard, cluster-admin on the home cluster, until ${until}.`;
+    case "denied": return `Denied by ${row.decidedByEmail}.`;
+    case "revoked": return `Revoked by ${row.decidedByEmail}: owner-guard is back and no new cluster tokens are signed. One already signed lasts until it ends, within 10 minutes.`;
+    default: return row.grantExpiresAt ? `This grant ended at ${until}.` : "This request expired without a decision.";
+  }
+}
+
+function breakGlassPage(row: BreakGlassGrantRow | null, message: string) {
+  const status = row ? effectiveStatus(row, new Date()) : null;
+  return SHELL("Break-glass - auth.romaine.life", html`
+    ${topbar("online")}
+    <main class="main">
+      <div class="vk-card">
+        <div class="iris-wrap">${IRIS}</div>
+        <h1>Break-glass</h1>
+        <p class="subtitle">A Claude session's request</p>
+        <p class="lede">${message}</p>
+        ${row ? html`
+          <div class="admin-card">
+            <div class="admin-grid">
+              <label>Machine</label>
+              <input readonly value="${row.deviceName}" />
+              <label>Session</label>
+              <input readonly value="${row.session}" />
+              <label>Reason</label>
+              <textarea readonly rows="4">${row.reason}</textarea>
+              <label>Duration</label>
+              <input readonly value="${row.minutes} minutes" />
+              <label>Status</label>
+              <input readonly value="${status}" />
+              <label>Access</label>
+              <input readonly value="past owner-guard, and cluster-admin on the home cluster" />
+            </div>
+          </div>
+        ` : html``}
+        ${row && status === "pending" ? html`
+          <form class="signin-stack" method="POST" action="/break-glass/${row.id}">
+            <button class="signin-btn" type="submit" name="decision" value="approve">
+              <span class="signin-label">Approve break-glass</span>
+              <span class="signin-meta">${row.minutes} min</span>
+            </button>
+            <button class="signin-btn" type="submit" name="decision" value="deny">
+              <span class="signin-label">Deny request</span>
+              <span class="signin-meta">cancel</span>
+            </button>
+          </form>
+        ` : html``}
+        ${row && status === "approved" ? html`
+          <form class="signin-stack" method="POST" action="/break-glass/${row.id}">
+            <button class="signin-btn" type="submit" name="decision" value="revoke">
+              <span class="signin-label">Revoke now</span>
+              <span class="signin-meta">ends the grant</span>
+            </button>
+          </form>
+        ` : html``}
+      </div>
+    </main>
+    ${footer()}
+  `);
+}
+
 app.get("/cli", async (c) => {
   const rawUserCode = c.req.query("user_code") ?? "";
   const userCode = rawUserCode.trim();
@@ -4205,6 +4478,9 @@ async function start(): Promise<void> {
     // Azure access requests (src/azure-access.ts): the table is created if missing.
     await db.execute(sql.raw(AZURE_ACCESS_SCHEMA_SQL));
     log.info("azure access schema ready");
+    // Break-glass requests (src/break-glass.ts): likewise.
+    await db.execute(sql.raw(BREAK_GLASS_SCHEMA_SQL));
+    log.info("[break-glass] schema ready");
   }
   serve({ fetch: app.fetch, port }, (info) => {
     log.info("auth listening", { port: info.port });

@@ -24,6 +24,8 @@ export const DEVICE_AUDIENCES: Record<string, { ttlSeconds: number }> = {
   ssh: { ttlSeconds: 10 * 60 },
   // Azure workload identity federation while an approved grant lasts (src/azure-access.ts).
   azure: { ttlSeconds: 10 * 60 },
+  // cluster-admin on the home cluster while a break-glass grant lasts (src/break-glass.ts).
+  "home-cluster-break-glass": { ttlSeconds: 10 * 60 },
   // Tailscale workload identity federation: the machine trades this for a tagged,
   // pre-approved join of its own, so a home PC rejoins the tailnet with no browser
   // sign-in and no stored key (AUT-10).

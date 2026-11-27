@@ -255,3 +255,23 @@ export const azureAccessGrant = pgTable("azure_access_grant", {
   lastTokenAt: timestamp("last_token_at"),
   tokenCount: integer("token_count").notNull().default(0),
 });
+
+// Break-glass requests and grants (src/break-glass.ts, AHT-209). Created at startup by
+// BREAK_GLASS_SCHEMA_SQL; every row is kept as the audit record.
+export const breakGlassGrant = pgTable("break_glass_grant", {
+  id: text("id").primaryKey(),
+  machineSubject: text("machine_subject").notNull(),
+  deviceName: text("device_name").notNull(),
+  session: text("session").notNull(),
+  reason: text("reason").notNull(),
+  minutes: integer("minutes").notNull(),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  requestExpiresAt: timestamp("request_expires_at").notNull(),
+  decidedAt: timestamp("decided_at"),
+  decidedByEmail: text("decided_by_email"),
+  grantExpiresAt: timestamp("grant_expires_at"),
+  revokedAt: timestamp("revoked_at"),
+  lastTokenAt: timestamp("last_token_at"),
+  tokenCount: integer("token_count").notNull().default(0),
+});

@@ -354,6 +354,52 @@ logged as `azure access ...` lines, and counted in `auth_azure_access_total{acti
 infra-bootstrap's tofu outputs `azure_access_client_id` and `azure_access_tenant_id`. Empty,
 the `azure` exchange refuses with `not_configured`.
 
+## Break-glass on approval
+
+One Claude session on a home machine gets past owner-guard, and cluster-admin on the home
+k3s cluster, for a while, by asking for it and having an administrator approve it (AHT-209).
+It runs on Azure access's grant machinery: the same request rules, statuses, held status
+requests and refusals.
+
+```sh
+romaine-auth break-glass request --reason "move the sync runners' keys off their volumes" --session <claude-session-id> --minutes 60
+romaine-auth break-glass status --session <claude-session-id> --json
+romaine-auth cluster token
+```
+
+1. The machine files the request with its own machine token (`POST /api/break-glass/requests`,
+   `{reason, minutes, session}`; 15 to 480 minutes, 60 by default; `session` is the Claude
+   session id and required), answered `{id, status, session, minutes, approveUrl,
+   requestExpiresAt}`. `break-glass request` prints the approval link,
+   `https://auth.romaine.life/break-glass/<id>`, to stderr.
+2. An administrator opens the link, signed in, sees the machine, session, reason and
+   duration, and approves or denies. An undecided request lapses after 30 minutes.
+3. The machine waits on `GET /api/break-glass/requests/<id>?wait=10`, held open as Azure
+   access's is, answered `{id, status, device, session, reason, minutes, requestExpiresAt,
+   grantExpiresAt, decidedBy}`. `break-glass request` exits 0 only when approved.
+4. owner-guard asks `GET /api/break-glass/active` with the machine token: the machine's
+   approved, unexpired, unrevoked grants, `[{id, session, grantExpiresAt}]`.
+   `break-glass status --session ID` exits 0 and prints the session's grant (`--json`: one
+   such object), or exits 1 when it has none.
+5. While a grant lasts, the machine's device-token exchange with audience
+   `home-cluster-break-glass` signs a JWT (iss `https://auth.romaine.life`, aud
+   `home-cluster-break-glass`, sub the machine's subject, `device` the machine's name as its
+   machine token and OpenBao's home-cluster token name it, `grant` the grant id), at most 10
+   minutes and never past the grant, with the keys the issuer's discovery already publishes.
+   The home cluster's API server takes it as cluster-admin (nelsong6/home-cluster).
+   `cluster token` prints it as a `client.authentication.k8s.io/v1` ExecCredential for a
+   kubeconfig exec plugin, asking auth each time, never cached.
+
+Times in the answers are Unix seconds.
+
+**Revoking.** The approval page of an active grant has **Revoke now**: the grant leaves
+`active` at once, so owner-guard stops letting the session past, and auth signs no more
+cluster tokens for it. One already signed lasts until it ends, within 10 minutes.
+
+**Record.** Every request, decision and revoke is a row in `break_glass_grant` (created at
+startup), logged as `[break-glass] ...` lines, and counted in
+`auth_break_glass_total{action,result}`.
+
 ## Rejoining the tailnet (AUT-10)
 
 `romaine-auth tailnet join` puts a home machine back on the tailnet with no browser sign-in

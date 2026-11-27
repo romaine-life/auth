@@ -203,3 +203,16 @@ const authAzureAccessTotal = new Counter({
 export function recordAzureAccess(action: "request" | "status" | "decide" | "token", result: string): void {
   authAzureAccessTotal.labels(action, result).inc();
 }
+
+// Break-glass on approval (src/break-glass.ts, AHT-209): requests filed, status and active
+// checks, decisions and revokes made, and cluster tokens minted, by outcome.
+const authBreakGlassTotal = new Counter({
+  name: "auth_break_glass_total",
+  help: "Break-glass requests, checks, decisions and cluster token mints, labeled by action and outcome.",
+  labelNames: ["action", "result"] as const,
+  registers: [registry],
+});
+
+export function recordBreakGlass(action: "request" | "status" | "active" | "decide" | "token", result: string): void {
+  authBreakGlassTotal.labels(action, result).inc();
+}
