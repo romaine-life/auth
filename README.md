@@ -28,6 +28,7 @@ romaine-auth whoami
 romaine-auth user-login
 romaine-auth whoami --human
 romaine-auth ssh --user nelson nelsonpc hostname
+romaine-auth ssh -t --user nelson nelsonpc tmux -L at attach
 romaine-auth op get /api/v3/users/me
 romaine-auth bao get secret/data/home/ntfy
 romaine-auth home-token --role shows --out FILE
@@ -35,6 +36,8 @@ romaine-auth version
 ```
 
 `bao` (`client.BaoRequest`) makes one OpenBao API call as this machine's device login, at a path under `/v1/` (`get`, `list`, `post`, `patch`, `delete`; a body from a file or `--body-stdin`, never the command line). `patch` sends a JSON merge patch, so `{"data":{"key":null}}` removes one value. What it may do is the device role's policies in nelsong6/openbao; the home PCs Claude works on keep every secret there (BAO-12).
+
+`ssh` (`client.SSH`) trades a fresh key for a short-lived certificate and runs the system OpenSSH client with it, so known-host checks and terminal handling stay OpenSSH's. Everything after `HOST` is the remote command. `-t`, before `HOST`, asks OpenSSH for a terminal (its own `-t`), which an interactive remote command such as `tmux attach` needs (AUT-12).
 
 Every call the client makes to auth, OpenBao, OpenProject or Tailscale goes through
 `internal/netclient`, built for slow, lossy links (a hotel Wi-Fi at 250 ms and heavy loss,

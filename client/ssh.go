@@ -17,7 +17,8 @@ import (
 )
 
 // SSH uses the native client, retaining its known-host verification and terminal handling.
-func SSH(ctx context.Context, target, user string, args []string) error {
+// tty asks OpenSSH for a terminal (-t), which an interactive remote command needs.
+func SSH(ctx context.Context, target, user string, tty bool, args []string) error {
 	if target == "" || strings.HasPrefix(target, "-") || user == "" {
 		return errors.New("SSH target and user are required")
 	}
@@ -74,9 +75,7 @@ func SSH(ctx context.Context, target, user string, args []string) error {
 	if runtime.GOOS == "windows" {
 		binary = filepath.Join(os.Getenv("SystemRoot"), "System32", "OpenSSH", "ssh.exe")
 	}
-	argv := []string{"-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "-i", keyPath, "-o", "CertificateFile=" + certPath, "-l", user, target}
-	argv = append(argv, args...)
-	cmd := exec.CommandContext(ctx, binary, argv...)
+	cmd := exec.CommandContext(ctx, binary, sshArgv(keyPath, certPath, user, target, tty, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -84,4 +83,14 @@ func SSH(ctx context.Context, target, user string, args []string) error {
 		return fmt.Errorf("SSH: %w", err)
 	}
 	return nil
+}
+
+// sshArgv is OpenSSH's command line: every option before the target, the remote command after it.
+func sshArgv(keyPath, certPath, user, target string, tty bool, args []string) []string {
+	argv := []string{"-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "-i", keyPath, "-o", "CertificateFile=" + certPath}
+	if tty {
+		argv = append(argv, "-t")
+	}
+	argv = append(argv, "-l", user, target)
+	return append(argv, args...)
 }

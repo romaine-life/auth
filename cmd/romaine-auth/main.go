@@ -32,7 +32,7 @@ func main() {
 }
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, bao get|list|post|patch|delete PATH, ssh --user USER HOST [COMMAND...], azure request --reason TEXT [--minutes N] | azure login, break-glass request --reason TEXT --session ID [--minutes N] | break-glass status --session ID [--json], cluster token, tailnet join [--force], or version")
+		return errors.New("use enroll NAME, user-login, whoami [--human], token --out FILE [--audience openproject], home-token --role ROLE --out FILE, bao get|list|post|patch|delete PATH, ssh [-t] --user USER HOST [COMMAND...], azure request --reason TEXT [--minutes N] | azure login, break-glass request --reason TEXT --session ID [--minutes N] | break-glass status --session ID [--json], cluster token, tailnet join [--force], or version")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -214,13 +214,14 @@ func run(args []string) error {
 	case "ssh":
 		flags := flag.NewFlagSet("ssh", flag.ContinueOnError)
 		user := flags.String("user", "", "destination OS login")
+		tty := flags.Bool("t", false, "request a terminal, for an interactive remote command")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
 		if flags.NArg() < 1 || *user == "" {
-			return errors.New("ssh --user USER HOST [COMMAND...]")
+			return errors.New("ssh [-t] --user USER HOST [COMMAND...]")
 		}
-		return client.SSH(ctx, flags.Arg(0), *user, flags.Args()[1:])
+		return client.SSH(ctx, flags.Arg(0), *user, *tty, flags.Args()[1:])
 	case "op":
 		if len(args) < 3 || (args[1] != "get" && args[1] != "post" && args[1] != "patch") {
 			return errors.New("op get|post|patch /api/v3/PATH [BODY-FILE]")
